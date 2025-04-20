@@ -10,6 +10,11 @@ from .serializers import (
     GameActionRequestSerializer
 )
 from .services.game_service import GameService
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from django.contrib.auth.models import User
+from django.db import transaction
 
 class PokerTableViewSet(viewsets.ModelViewSet):
     queryset = PokerTable.objects.all()
@@ -240,4 +245,56 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 {'error': 'Invalid amount'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+        
+    @api_view(['POST'])
+    @permission_classes([AllowAny])
+    def register_user(request):
+        """Register a new user"""
+        username = request.data.get('username')
+        email = request.data.get('email')
+        password = request.data.get('password')
+        
+        # Validate required fields
+        if not username or not email or not password:
+            return Response(
+                {'error': 'Please provide username, email, and password'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if username already exists
+        if User.objects.filter(username=username).exists():
+            return Response(
+                {'username': ['This username is already taken']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if email already exists
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {'email': ['This email is already registered']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create user and player profile
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password
+                )
+                
+                # Create player profile with initial balance
+                from .models import Player
+                Player.objects.create(user=user, balance=1000)  # Give new users $1000 to start
+            
+            return Response(
+                {'message': 'User registered successfully'},
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

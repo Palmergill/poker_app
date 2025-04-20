@@ -1,32 +1,52 @@
 // src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Navbar from './components/Navbar';
+import Login from './components/Login';
+import Register from './components/Register';
+import Profile from './components/Profile';
 import TableList from './components/TableList';
 import TableDetail from './components/TableDetail';
+import PokerTable from './components/PokerTable';
+import PrivateRoute from './components/PrivateRoute';
 import './App.css';
 
 function App() {
   return (
     <Router>
       <div className="App">
-        <header className="App-header">
-          <h1>Poker App</h1>
-          <nav>
-            <ul>
-              <li>
-                <Link to="/">Home</Link>
-              </li>
-              <li>
-                <Link to="/tables">Tables</Link>
-              </li>
-            </ul>
-          </nav>
-        </header>
-        <main>
+        <Navbar />
+        
+        <main className="main-content">
           <Routes>
-            <Route path="/" element={<div>Welcome to the Poker App!</div>} />
-            <Route path="/tables" element={<TableList />} />
-            <Route path="/tables/:id" element={<TableDetail />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            
+            <Route path="/profile" element={
+              <PrivateRoute>
+                <Profile />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/tables" element={
+              <PrivateRoute>
+                <TableList />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/tables/:id" element={
+              <PrivateRoute>
+                <TableDetail />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/games/:id" element={
+              <PrivateRoute>
+                <PokerTable />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/" element={<Navigate to="/tables" replace />} />
           </Routes>
         </main>
       </div>
