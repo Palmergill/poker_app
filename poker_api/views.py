@@ -12,6 +12,7 @@ from .serializers import (
 from .services.game_service import GameService
 from django.contrib.auth.models import User
 from django.db import transaction
+from decimal import Decimal
 
 class PokerTableViewSet(viewsets.ModelViewSet):
     queryset = PokerTable.objects.all()
@@ -203,7 +204,7 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            player.balance += amount
+            player.balance += Decimal(str(amount))
             player.save()
             
             serializer = self.get_serializer(player)
@@ -233,7 +234,7 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            player.balance -= amount
+            player.balance -= Decimal(str(amount))
             player.save()
             
             serializer = self.get_serializer(player)

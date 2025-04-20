@@ -1,7 +1,7 @@
 // src/components/TableList.js
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { tableService } from '../services/apiService';
+import { tableService, gameService } from '../services/apiService';
 
 const TableList = () => {
   const [tables, setTables] = useState([]);
