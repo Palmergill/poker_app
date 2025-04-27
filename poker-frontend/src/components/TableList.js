@@ -1,4 +1,4 @@
-// src/components/TableList.js
+// src/components/TableList.js - Updated with create table link
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { tableService, gameService } from '../services/apiService';
@@ -48,10 +48,16 @@ const TableList = () => {
 
   return (
     <div className="table-list">
-      <h2>Available Poker Tables</h2>
+      <div className="table-list-header">
+        <h2>Available Poker Tables</h2>
+        <Link to="/tables/create" className="create-table-btn">Create New Table</Link>
+      </div>
       
       {tables.length === 0 ? (
-        <p>No tables available</p>
+        <div className="no-tables">
+          <p>No tables available. Be the first to create one!</p>
+          <Link to="/tables/create" className="btn btn-primary">Create Table</Link>
+        </div>
       ) : (
         <div className="table-grid">
           {tables.map((table) => {

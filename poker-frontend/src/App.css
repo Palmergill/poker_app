@@ -6,7 +6,7 @@
 }
 
 body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   line-height: 1.6;
   color: #333;
   background-color: #f4f4f9;
@@ -372,4 +372,109 @@ button:disabled {
   font-size: 1.1rem;
 }
 
-/* Player cards and game styles are in PokerTable.css */
+/* Table List Header Styles */
+.table-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.create-table-btn {
+  background-color: #3498db;
+  color: white;
+  padding: 0.7rem 1.5rem;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: bold;
+  transition: background-color 0.3s;
+}
+
+.create-table-btn:hover {
+  background-color: #2980b9;
+}
+
+/* No Tables Message */
+.no-tables {
+  text-align: center;
+  padding: 3rem;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.no-tables p {
+  margin-bottom: 1.5rem;
+  font-size: 1.1rem;
+  color: #666;
+}
+
+.no-tables .btn {
+  display: inline-block;
+  padding: 0.7rem 1.5rem;
+  text-decoration: none;
+}
+
+/* Create Table Form Styles */
+.create-table {
+  max-width: 600px;
+  margin: 2rem auto;
+  padding: 2rem;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.create-table h2 {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  color: #2c3e50;
+}
+
+.create-table .form-group {
+  margin-bottom: 1.5rem;
+}
+
+.create-table label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: #2c3e50;
+}
+
+.create-table input {
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.create-table button {
+  width: 100%;
+  padding: 0.8rem;
+  font-size: 1.1rem;
+  margin-top: 1rem;
+}
+
+/* Make room for scrollbars if needed */
+.table-grid {
+  overflow: auto;
+  padding-bottom: 10px;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+  .table-list-header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .table-list-header h2 {
+    margin-bottom: 0;
+  }
+
+  .create-table {
+    padding: 1.5rem;
+  }
+}

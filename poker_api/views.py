@@ -19,6 +19,32 @@ class PokerTableViewSet(viewsets.ModelViewSet):
     serializer_class = PokerTableSerializer
     permission_classes = [IsAuthenticated]
     
+    def perform_create(self, serializer):
+        """Custom create method to validate table creation"""
+        # Basic validation
+        small_blind = float(self.request.data.get('small_blind', 0))
+        big_blind = float(self.request.data.get('big_blind', 0))
+        min_buy_in = float(self.request.data.get('min_buy_in', 0))
+        max_buy_in = float(self.request.data.get('max_buy_in', 0))
+        
+        # Additional validation
+        errors = {}
+        if big_blind < small_blind:
+            errors['big_blind'] = 'Big blind must be greater than or equal to small blind'
+        
+        if min_buy_in < big_blind * 10:
+            errors['min_buy_in'] = 'Minimum buy-in should be at least 10 times the big blind'
+        
+        if max_buy_in < min_buy_in:
+            errors['max_buy_in'] = 'Maximum buy-in must be greater than or equal to minimum buy-in'
+        
+        if errors:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(errors)
+        
+        # Save the table
+        serializer.save()
+    
     @action(detail=True, methods=['post'])
     def join_table(self, request, pk=None):
         """Join a table with a specified buy-in amount"""
@@ -71,7 +97,7 @@ class PokerTableViewSet(viewsets.ModelViewSet):
         for seat in range(table.max_players):
             if seat not in occupied_seats:
                 # Join the table
-                player.balance -= float(buy_in)
+                player.balance -= Decimal(str(buy_in))
                 player.save()
                 
                 PlayerGame.objects.create(
@@ -89,7 +115,7 @@ class PokerTableViewSet(viewsets.ModelViewSet):
             {'error': 'No available seats'},
             status=status.HTTP_400_BAD_REQUEST
         )
-
+    
 class GameViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Game.objects.all()
     serializer_class = GameSerializer
@@ -155,7 +181,7 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
                 )
             
             # Cash out chips
-            player.balance += float(player_game.stack)
+            player.balance += Decimal(str((player_game.stack)))
             player.save()
             
             # Remove player from game

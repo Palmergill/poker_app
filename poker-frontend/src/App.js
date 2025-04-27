@@ -1,4 +1,4 @@
-// src/App.js
+// src/App.js - Updated with CreateTable route
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
@@ -7,6 +7,7 @@ import Register from './components/Register';
 import Profile from './components/Profile';
 import TableList from './components/TableList';
 import TableDetail from './components/TableDetail';
+import CreateTable from './components/CreateTable';
 import PokerTable from './components/PokerTable';
 import PrivateRoute from './components/PrivateRoute';
 import './App.css';
@@ -31,6 +32,12 @@ function App() {
             <Route path="/tables" element={
               <PrivateRoute>
                 <TableList />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/tables/create" element={
+              <PrivateRoute>
+                <CreateTable />
               </PrivateRoute>
             } />
             

@@ -1,4 +1,6 @@
-// src/services/apiService.js
+// This file contains the API service for handling authentication, player, table, and game-related requests.
+// It uses axios for HTTP requests and handles token management for authentication.
+// It also includes a WebSocket connection for real-time game updates.
 import axios from 'axios';
 
 const API_URL = 'http://localhost:8000/api';
@@ -83,6 +85,7 @@ const playerService = {
 const tableService = {
   getTables: () => apiClient.get(`/tables/`),
   getTable: (id) => apiClient.get(`/tables/${id}/`),
+  createTable: (tableData) => apiClient.post(`/tables/`, tableData),
   joinTable: (id, buyIn) => apiClient.post(`/tables/${id}/join_table/`, { buy_in: buyIn }),
 };
 

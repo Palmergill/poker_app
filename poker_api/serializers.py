@@ -19,6 +19,24 @@ class PokerTableSerializer(serializers.ModelSerializer):
     class Meta:
         model = PokerTable
         fields = ['id', 'name', 'max_players', 'small_blind', 'big_blind', 'min_buy_in', 'max_buy_in', 'created_at']
+        
+    def validate(self, data):
+        """
+        Validate table creation data
+        """
+        if 'big_blind' in data and 'small_blind' in data:
+            if data['big_blind'] < data['small_blind']:
+                raise serializers.ValidationError({'big_blind': 'Big blind must be greater than or equal to small blind'})
+        
+        if 'min_buy_in' in data and 'big_blind' in data:
+            if data['min_buy_in'] < data['big_blind'] * 10:
+                raise serializers.ValidationError({'min_buy_in': 'Minimum buy-in should be at least 10 times the big blind'})
+        
+        if 'max_buy_in' in data and 'min_buy_in' in data:
+            if data['max_buy_in'] < data['min_buy_in']:
+                raise serializers.ValidationError({'max_buy_in': 'Maximum buy-in must be greater than or equal to minimum buy-in'})
+        
+        return data
 
 class PlayerGameSerializer(serializers.ModelSerializer):
     player = PlayerSerializer(read_only=True)
