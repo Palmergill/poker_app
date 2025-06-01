@@ -2,6 +2,7 @@
 import random
 from .card_utils import Deck, Card
 from .hand_evaluator import HandEvaluator
+from decimal import Decimal
 
 class PokerGameManager:
     """
@@ -24,8 +25,8 @@ class PokerGameManager:
         self.deck = Deck()
         self.community_cards = []
         self.phase = None
-        self.pot = 0
-        self.current_bet = 0
+        self.pot = Decimal('0')
+        self.current_bet = Decimal('0')
         self.player_hands = {}  # Maps player ID to their hole cards
         self.player_bets = {}  # Maps player ID to their current bet in this round
         self.player_total_bets = {}  # Maps player ID to their total bet in this hand
@@ -43,8 +44,8 @@ class PokerGameManager:
         self.deck.shuffle()
         self.community_cards = []
         self.phase = None
-        self.pot = 0
-        self.current_bet = 0
+        self.pot = Decimal('0')
+        self.current_bet = Decimal('0')
         self.player_hands = {}
         self.player_bets = {}
         self.player_total_bets = {}
@@ -84,8 +85,8 @@ class PokerGameManager:
     def _post_blinds(self):
         """Post the small and big blinds."""
         # Get blind amounts from table
-        small_blind = float(self.table.small_blind)
-        big_blind = float(self.table.big_blind)
+        small_blind = self.table.small_blind
+        big_blind = self.table.big_blind
         
         # Post small blind
         small_blind_player = self.active_players[self.small_blind_position]
@@ -136,6 +137,10 @@ class PokerGameManager:
         if current_player.id != player_id:
             raise ValueError("Not your turn to act")
         
+        # Convert amount to Decimal for consistency
+        if amount:
+            amount = Decimal(str(amount))
+            
         # Process the action
         if action == 'FOLD':
             self._handle_fold(current_player)
@@ -167,13 +172,13 @@ class PokerGameManager:
     
     def _handle_check(self, player):
         """Handle a check action."""
-        current_bet = self.player_bets.get(player.id, 0)
+        current_bet = self.player_bets.get(player.id, Decimal('0'))
         if current_bet < self.current_bet:
             raise ValueError("Cannot check when there is a bet to call")
     
     def _handle_call(self, player):
         """Handle a call action."""
-        current_bet = self.player_bets.get(player.id, 0)
+        current_bet = self.player_bets.get(player.id, Decimal('0'))
         call_amount = min(self.current_bet - current_bet, player.stack)
         
         # Deduct from player's stack
@@ -181,7 +186,7 @@ class PokerGameManager:
         
         # Update player's bet
         self.player_bets[player.id] = current_bet + call_amount
-        self.player_total_bets[player.id] = self.player_total_bets.get(player.id, 0) + call_amount
+        self.player_total_bets[player.id] = self.player_total_bets.get(player.id, Decimal('0')) + call_amount
     
     def _handle_bet(self, player, amount):
         """Handle a bet action."""
@@ -190,7 +195,7 @@ class PokerGameManager:
             raise ValueError("Cannot bet when there is already a bet, use 'RAISE' instead")
         
         # Validate bet amount
-        min_bet = float(self.table.big_blind)
+        min_bet = self.table.big_blind
         if amount < min_bet:
             raise ValueError(f"Bet must be at least the big blind: {min_bet}")
         
@@ -202,7 +207,7 @@ class PokerGameManager:
         
         # Update player's bet and current bet
         self.player_bets[player.id] = bet_amount
-        self.player_total_bets[player.id] = self.player_total_bets.get(player.id, 0) + bet_amount
+        self.player_total_bets[player.id] = self.player_total_bets.get(player.id, Decimal('0')) + bet_amount
         self.current_bet = bet_amount
         
         # Update last raiser
@@ -214,7 +219,7 @@ class PokerGameManager:
         if self.current_bet == 0:
             raise ValueError("Cannot raise when there is no bet, use 'BET' instead")
         
-        current_bet = self.player_bets.get(player.id, 0)
+        current_bet = self.player_bets.get(player.id, Decimal('0'))
         raise_amount = amount - current_bet
         
         # Validate raise amount
@@ -231,7 +236,7 @@ class PokerGameManager:
         
         # Update player's bet and current bet
         self.player_bets[player.id] = total_bet
-        self.player_total_bets[player.id] = self.player_total_bets.get(player.id, 0) + raise_amount
+        self.player_total_bets[player.id] = self.player_total_bets.get(player.id, Decimal('0')) + raise_amount
         self.current_bet = total_bet
         
         # Update last raiser
@@ -261,7 +266,7 @@ class PokerGameManager:
         
         # Reset bets
         self.player_bets = {}
-        self.current_bet = 0
+        self.current_bet = Decimal('0')
         self.last_raiser_position = -1
         
         # Determine next phase
@@ -308,12 +313,12 @@ class PokerGameManager:
         winners = [player for rank, value, name, player in sorted_hands if (rank, value) == (best_hand[0], best_hand[1])]
         
         # Distribute pot evenly among winners
-        win_amount = self.pot / len(winners)
+        win_amount = self.pot / Decimal(len(winners))
         for winner in winners:
             winner.stack += win_amount
         
         # Reset pot
-        self.pot = 0
+        self.pot = Decimal('0')
     
     def _end_hand(self):
         """End the current hand when only one player remains."""
@@ -323,7 +328,7 @@ class PokerGameManager:
             winner.stack += self.pot
         
         # Reset pot
-        self.pot = 0
+        self.pot = Decimal('0')
         
         # Move to showdown phase (which will start a new hand)
         self.phase = 'SHOWDOWN'

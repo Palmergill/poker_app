@@ -19,55 +19,29 @@ class PokerTableViewSet(viewsets.ModelViewSet):
     serializer_class = PokerTableSerializer
     permission_classes = [IsAuthenticated]
     
-    def perform_create(self, serializer):
-        """Custom create method to validate table creation"""
-        # Basic validation
-        small_blind = float(self.request.data.get('small_blind', 0))
-        big_blind = float(self.request.data.get('big_blind', 0))
-        min_buy_in = float(self.request.data.get('min_buy_in', 0))
-        max_buy_in = float(self.request.data.get('max_buy_in', 0))
-        
-        # Additional validation
-        errors = {}
-        if big_blind < small_blind:
-            errors['big_blind'] = 'Big blind must be greater than or equal to small blind'
-        
-        if min_buy_in < big_blind * 10:
-            errors['min_buy_in'] = 'Minimum buy-in should be at least 10 times the big blind'
-        
-        if max_buy_in < min_buy_in:
-            errors['max_buy_in'] = 'Maximum buy-in must be greater than or equal to minimum buy-in'
-        
-        if errors:
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError(errors)
-        
-        # Save the table
-        serializer.save()
-    
     @action(detail=True, methods=['post'])
     def join_table(self, request, pk=None):
         """Join a table with a specified buy-in amount"""
         table = self.get_object()
         player, created = Player.objects.get_or_create(user=request.user)
         
-        # Get buy-in amount from request
-        buy_in = request.data.get('buy_in', table.min_buy_in)
+        # Get buy-in amount from request and convert to Decimal
+        buy_in = Decimal(str(request.data.get('buy_in', table.min_buy_in)))
         
         # Validate buy-in amount
-        if float(buy_in) < float(table.min_buy_in):
+        if buy_in < table.min_buy_in:
             return Response(
                 {'error': f'Buy-in must be at least {table.min_buy_in}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if float(buy_in) > float(table.max_buy_in):
+        if buy_in > table.max_buy_in:
             return Response(
                 {'error': f'Buy-in cannot exceed {table.max_buy_in}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if float(buy_in) > float(player.balance):
+        if buy_in > player.balance:
             return Response(
                 {'error': 'Insufficient balance'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -97,7 +71,7 @@ class PokerTableViewSet(viewsets.ModelViewSet):
         for seat in range(table.max_players):
             if seat not in occupied_seats:
                 # Join the table
-                player.balance -= Decimal(str(buy_in))
+                player.balance -= buy_in
                 player.save()
                 
                 PlayerGame.objects.create(
@@ -115,7 +89,7 @@ class PokerTableViewSet(viewsets.ModelViewSet):
             {'error': 'No available seats'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
 class GameViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Game.objects.all()
     serializer_class = GameSerializer
@@ -181,7 +155,7 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
                 )
             
             # Cash out chips
-            player.balance += Decimal(str((player_game.stack)))
+            player.balance += player_game.stack
             player.save()
             
             # Remove player from game
@@ -223,19 +197,19 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
         player, created = Player.objects.get_or_create(user=request.user)
         
         try:
-            amount = float(request.data.get('amount', 0))
+            amount = Decimal(str(request.data.get('amount', 0)))
             if amount <= 0:
                 return Response(
                     {'error': 'Amount must be positive'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            player.balance += Decimal(str(amount))
+            player.balance += amount
             player.save()
             
             serializer = self.get_serializer(player)
             return Response(serializer.data)
-        except ValueError:
+        except (ValueError, TypeError):
             return Response(
                 {'error': 'Invalid amount'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -247,25 +221,25 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
         player, created = Player.objects.get_or_create(user=request.user)
         
         try:
-            amount = float(request.data.get('amount', 0))
+            amount = Decimal(str(request.data.get('amount', 0)))
             if amount <= 0:
                 return Response(
                     {'error': 'Amount must be positive'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            if amount > float(player.balance):
+            if amount > player.balance:
                 return Response(
                     {'error': 'Insufficient balance'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            player.balance -= Decimal(str(amount))
+            player.balance -= amount
             player.save()
             
             serializer = self.get_serializer(player)
             return Response(serializer.data)
-        except ValueError:
+        except (ValueError, TypeError):
             return Response(
                 {'error': 'Invalid amount'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -363,7 +337,7 @@ def register_user(request):
             
             # Create player profile with initial balance
             from .models import Player
-            Player.objects.create(user=user, balance=1000)  # Give new users $1000 to start
+            Player.objects.create(user=user, balance=Decimal('1000'))  # Give new users $1000 to start
         
         return Response(
             {'message': 'User registered successfully'},

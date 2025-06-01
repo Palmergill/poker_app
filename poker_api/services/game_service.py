@@ -7,6 +7,7 @@ import random
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import json
+from decimal import Decimal
 
 class GameService:
     """
@@ -41,7 +42,7 @@ class GameService:
                 player=player,
                 game=game,
                 seat_position=i,
-                stack=min(float(player.balance), float(table.max_buy_in)),
+                stack=min(player.balance, table.max_buy_in),
                 is_active=True
             )
         
@@ -93,14 +94,14 @@ class GameService:
         big_blind_player = player_games_list[big_blind_pos]
         
         # Post small blind
-        small_blind_amount = min(float(game.table.small_blind), float(small_blind_player.stack))
+        small_blind_amount = min(game.table.small_blind, small_blind_player.stack)
         small_blind_player.stack -= small_blind_amount
         small_blind_player.current_bet = small_blind_amount
         small_blind_player.total_bet = small_blind_amount
         small_blind_player.save()
         
         # Post big blind
-        big_blind_amount = min(float(game.table.big_blind), float(big_blind_player.stack))
+        big_blind_amount = min(game.table.big_blind, big_blind_player.stack)
         big_blind_player.stack -= big_blind_amount
         big_blind_player.current_bet = big_blind_amount
         big_blind_player.total_bet = big_blind_amount
@@ -156,6 +157,10 @@ class GameService:
         except PlayerGame.DoesNotExist:
             raise ValueError("Player not in this game or not active")
         
+        # Convert amount to Decimal for consistency
+        if amount:
+            amount = Decimal(str(amount))
+            
         # Process the action
         if action_type == 'FOLD':
             GameService._handle_fold(game, player_game)
@@ -196,33 +201,38 @@ class GameService:
     @staticmethod
     def _handle_check(game, player_game):
         """Handle a check action."""
-        if float(player_game.current_bet) < float(game.current_bet):
+        if player_game.current_bet < game.current_bet:
             raise ValueError("Cannot check when there is a bet to call")
     
     @staticmethod
     def _handle_call(game, player_game):
         """Handle a call action."""
-        call_amount = min(float(game.current_bet) - float(player_game.current_bet), float(player_game.stack))
+        # Convert all values to Decimal for consistent operations
+        current_bet = game.current_bet
+        player_current_bet = player_game.current_bet
+        player_stack = player_game.stack
+        
+        call_amount = min(current_bet - player_current_bet, player_stack)
         
         player_game.stack -= call_amount
-        player_game.current_bet = float(player_game.current_bet) + call_amount
-        player_game.total_bet = float(player_game.total_bet) + call_amount
+        player_game.current_bet += call_amount
+        player_game.total_bet += call_amount
         player_game.save()
     
     @staticmethod
     def _handle_bet(game, player_game, amount):
         """Handle a bet action."""
-        if float(game.current_bet) > 0:
+        if game.current_bet > 0:
             raise ValueError("Cannot bet when there is already a bet, use 'RAISE' instead")
         
-        min_bet = float(game.table.big_blind)
-        if float(amount) < min_bet:
+        min_bet = game.table.big_blind
+        if amount < min_bet:
             raise ValueError(f"Bet must be at least the big blind: {min_bet}")
         
-        bet_amount = min(float(amount), float(player_game.stack))
+        bet_amount = min(amount, player_game.stack)
         player_game.stack -= bet_amount
         player_game.current_bet = bet_amount
-        player_game.total_bet = float(player_game.total_bet) + bet_amount
+        player_game.total_bet += bet_amount
         player_game.save()
         
         game.current_bet = bet_amount
@@ -231,26 +241,26 @@ class GameService:
     @staticmethod
     def _handle_raise(game, player_game, amount):
         """Handle a raise action."""
-        if float(game.current_bet) == 0:
+        if game.current_bet == 0:
             raise ValueError("Cannot raise when there is no bet, use 'BET' instead")
         
         # Calculate total amount player needs to put in
-        total_amount = float(amount)
-        current_player_bet = float(player_game.current_bet)
+        total_amount = amount
+        current_player_bet = player_game.current_bet
         raise_amount = total_amount - current_player_bet
         
         # Validate raise amount
-        min_raise = float(game.current_bet) * 2
+        min_raise = game.current_bet * 2
         if total_amount < min_raise:
             raise ValueError(f"Raise must be at least double the current bet: {min_raise}")
         
         # Cap raise at player's stack
-        raise_amount = min(raise_amount, float(player_game.stack))
+        raise_amount = min(raise_amount, player_game.stack)
         total_bet = current_player_bet + raise_amount
         
         player_game.stack -= raise_amount
         player_game.current_bet = total_bet
-        player_game.total_bet = float(player_game.total_bet) + raise_amount
+        player_game.total_bet += raise_amount
         player_game.save()
         
         game.current_bet = total_bet
@@ -280,11 +290,11 @@ class GameService:
         
         # Check if betting round is complete
         betting_complete = True
-        current_bet = float(game.current_bet)
+        current_bet = game.current_bet
         
         # Round is complete when all active players have matched the current bet or are all-in
         for pg in active_players:
-            if float(pg.current_bet) < current_bet and float(pg.stack) > 0:
+            if pg.current_bet < current_bet and pg.stack > 0:
                 betting_complete = False
                 break
         
@@ -406,7 +416,7 @@ class GameService:
         winners = [pg for rank, value, name, pg in sorted_hands if (rank, value) == (best_hand[0], best_hand[1])]
         
         # Split pot among winners
-        win_amount = game.pot / len(winners)
+        win_amount = game.pot / Decimal(len(winners))
         for winner in winners:
             winner.stack += win_amount
             winner.save()
