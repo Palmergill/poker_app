@@ -1,7 +1,7 @@
-// src/components/TableList.js - Updated with create table link
-import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { tableService, gameService } from '../services/apiService';
+// src/components/TableList.js
+import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
+import { tableService, gameService } from "../services/apiService";
 
 const TableList = () => {
   const [tables, setTables] = useState([]);
@@ -16,7 +16,7 @@ const TableList = () => {
         setTables(response.data);
         setLoading(false);
       } catch (err) {
-        setError('Failed to load tables');
+        setError("Failed to load tables");
         setLoading(false);
       }
     };
@@ -26,7 +26,7 @@ const TableList = () => {
         const response = await gameService.getGames();
         setActiveGames(response.data);
       } catch (err) {
-        console.error('Failed to load active games');
+        console.error("Failed to load active games");
       }
     };
 
@@ -43,49 +43,62 @@ const TableList = () => {
   }
 
   const getActiveGameForTable = (tableId) => {
-    return activeGames.find(game => game.table.id === tableId);
+    return activeGames.find((game) => game.table.id === tableId);
   };
 
   return (
     <div className="table-list">
-      <div className="table-list-header">
-        <h2>Available Poker Tables</h2>
-        <Link to="/tables/create" className="create-table-btn">Create New Table</Link>
-      </div>
-      
+      <h2>Available Poker Tables</h2>
+
       {tables.length === 0 ? (
-        <div className="no-tables">
-          <p>No tables available. Be the first to create one!</p>
-          <Link to="/tables/create" className="btn btn-primary">Create Table</Link>
-        </div>
+        <p>No tables available</p>
       ) : (
         <div className="table-grid">
           {tables.map((table) => {
             const activeGame = getActiveGameForTable(table.id);
-            
+
             return (
               <div key={table.id} className="table-card">
                 <h3>{table.name}</h3>
                 <div className="table-info">
-                  <p><strong>Blinds:</strong> ${table.small_blind}/${table.big_blind}</p>
-                  <p><strong>Buy-in:</strong> ${table.min_buy_in} - ${table.max_buy_in}</p>
-                  <p><strong>Max Players:</strong> {table.max_players}</p>
-                  
+                  <p>
+                    <strong>Blinds:</strong> ${table.small_blind}/$
+                    {table.big_blind}
+                  </p>
+                  <p>
+                    <strong>Buy-in:</strong> ${table.min_buy_in} - $
+                    {table.max_buy_in}
+                  </p>
+                  <p>
+                    <strong>Max Players:</strong> {table.max_players}
+                  </p>
+
                   {activeGame && (
                     <p>
                       <strong>Status:</strong> {activeGame.status}
-                      {activeGame.status === 'PLAYING' && ` (${activeGame.players.filter(p => p.is_active).length} active)`}
+                      {activeGame.status === "PLAYING" &&
+                        ` (${
+                          activeGame.players.filter((p) => p.is_active).length
+                        } active)`}
                     </p>
                   )}
                 </div>
-                
+
                 <div className="table-actions">
                   {activeGame ? (
-                    <Link to={`/games/${activeGame.id}`} className="btn btn-primary">
-                      {activeGame.status === 'WAITING' ? 'Join Game' : 'Return to Game'}
+                    <Link
+                      to={`/games/${activeGame.id}`}
+                      className="btn btn-primary"
+                    >
+                      {activeGame.status === "WAITING"
+                        ? "Join Game"
+                        : "Return to Game"}
                     </Link>
                   ) : (
-                    <Link to={`/tables/${table.id}`} className="btn btn-primary">
+                    <Link
+                      to={`/tables/${table.id}`}
+                      className="btn btn-primary"
+                    >
                       View Table
                     </Link>
                   )}

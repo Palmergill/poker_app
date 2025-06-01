@@ -1,30 +1,55 @@
 // src/components/Login.js
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { authService } from '../services/apiService';
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { authService, playerService } from "../services/apiService";
 
 const Login = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
+    setError("");
 
     try {
+      // First, login to get tokens
       const response = await authService.login(username, password);
-      // Store user info
-      localStorage.setItem('user', JSON.stringify({
-        id: response.user_id,
-        username: username
-      }));
-      navigate('/tables');
+
+      // After successful login, get the user's full profile
+      try {
+        const profileResponse = await playerService.getProfile();
+
+        // Store complete user info with proper structure
+        const userInfo = {
+          id: profileResponse.data.user.id,
+          username: profileResponse.data.user.username,
+          email: profileResponse.data.user.email,
+          playerId: profileResponse.data.id,
+        };
+
+        localStorage.setItem("user", JSON.stringify(userInfo));
+        console.log("User info stored:", userInfo);
+      } catch (profileError) {
+        console.error("Failed to get profile, using basic info:", profileError);
+
+        // Fallback: store basic user info if profile fetch fails
+        const basicUserInfo = {
+          username: username,
+          // The backend might return user_id in the token response
+          id: response.user_id || null,
+        };
+
+        localStorage.setItem("user", JSON.stringify(basicUserInfo));
+      }
+
+      navigate("/tables");
     } catch (err) {
-      setError('Invalid username or password');
+      console.error("Login error:", err);
+      setError("Invalid username or password");
     } finally {
       setLoading(false);
     }
@@ -44,7 +69,7 @@ const Login = () => {
             required
           />
         </div>
-        
+
         <div className="form-group">
           <label>Password</label>
           <input
@@ -54,12 +79,12 @@ const Login = () => {
             required
           />
         </div>
-        
+
         <button type="submit" disabled={loading}>
-          {loading ? 'Logging in...' : 'Login'}
+          {loading ? "Logging in..." : "Login"}
         </button>
       </form>
-      
+
       <p>
         Don't have an account? <a href="/register">Register</a>
       </p>
