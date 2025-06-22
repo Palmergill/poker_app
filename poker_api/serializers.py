@@ -6,7 +6,7 @@ from django.contrib.auth.models import User
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email']
+        fields = ['id', 'username', 'email', 'is_superuser', 'is_staff']
 
 class PlayerSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
@@ -47,34 +47,10 @@ class PlayerGameSerializer(serializers.ModelSerializer):
         fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cards', 'current_bet', 'total_bet']
     
     def get_cards(self, obj):
-        # For WebSocket updates (no request context), send all cards and let frontend handle visibility
-        # For API requests, only show cards to the owning player or in showdown
-        request = self.context.get('request')
-        
-        if not request:
-            # No request context (WebSocket update) - send cards with user info for frontend filtering
-            return {
-                'cards': obj.get_cards(),
-                'owner_id': obj.player.user.id,
-                'owner_username': obj.player.user.username
-            }
-        
-        if request.user == obj.player.user:
-            return {
-                'cards': obj.get_cards(),
-                'owner_id': obj.player.user.id,
-                'owner_username': obj.player.user.username
-            }
-        
-        if obj.game.phase == 'SHOWDOWN' and obj.is_active:
-            return {
-                'cards': obj.get_cards(),
-                'owner_id': obj.player.user.id,
-                'owner_username': obj.player.user.username
-            }
-        
+        # Always send cards data and let frontend handle visibility
+        # This ensures consistency between API and WebSocket updates
         return {
-            'cards': [],
+            'cards': obj.get_cards(),
             'owner_id': obj.player.user.id,
             'owner_username': obj.player.user.username
         }

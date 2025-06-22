@@ -45,6 +45,7 @@ class Game(models.Model):
     dealer_position = models.IntegerField(default=0)
     current_player = models.ForeignKey(Player, on_delete=models.SET_NULL, null=True, blank=True, related_name='games_to_play')
     community_cards = models.CharField(max_length=100, blank=True, null=True)  # Stored as JSON string
+    winner_info = models.CharField(max_length=500, blank=True, null=True)  # Stored as JSON string with winner details
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
@@ -57,6 +58,14 @@ class Game(models.Model):
         if self.community_cards:
             return json.loads(self.community_cards)
         return []
+    
+    def set_winner_info(self, winner_data):
+        self.winner_info = json.dumps(winner_data)
+    
+    def get_winner_info(self):
+        if self.winner_info:
+            return json.loads(self.winner_info)
+        return None
 
 class PlayerGame(models.Model):
     player = models.ForeignKey(Player, on_delete=models.CASCADE)
@@ -91,9 +100,17 @@ class GameAction(models.Model):
         ('RAISE', 'Raise'),
     ]
     
+    PHASE_CHOICES = [
+        ('PREFLOP', 'Pre-flop'),
+        ('FLOP', 'Flop'),
+        ('TURN', 'Turn'),
+        ('RIVER', 'River'),
+    ]
+    
     player_game = models.ForeignKey(PlayerGame, on_delete=models.CASCADE)
     action_type = models.CharField(max_length=10, choices=ACTION_CHOICES)
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    phase = models.CharField(max_length=20, choices=PHASE_CHOICES, default='PREFLOP')
     timestamp = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):

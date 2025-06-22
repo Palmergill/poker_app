@@ -28,6 +28,8 @@ const Login = () => {
           id: profileResponse.data.user.id,
           username: profileResponse.data.user.username,
           email: profileResponse.data.user.email,
+          is_superuser: profileResponse.data.user.is_superuser,
+          is_staff: profileResponse.data.user.is_staff,
           playerId: profileResponse.data.id,
         };
 

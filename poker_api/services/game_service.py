@@ -107,6 +107,9 @@ class GameService:
         big_blind_player.total_bet = big_blind_amount
         big_blind_player.save()
         
+        # Add blinds to pot immediately
+        game.pot += small_blind_amount + big_blind_amount
+        
         # Set current bet to big blind
         game.current_bet = big_blind_amount
         
@@ -182,7 +185,8 @@ class GameService:
         GameAction.objects.create(
             player_game=player_game,
             action_type=action_type,
-            amount=amount if action_type in ['BET', 'RAISE', 'CALL'] else 0
+            amount=amount if action_type in ['BET', 'RAISE', 'CALL'] else 0,
+            phase=game.phase
         )
         
         # Move to next player or phase
@@ -221,6 +225,10 @@ class GameService:
         player_game.current_bet += call_amount
         player_game.total_bet += call_amount
         player_game.save()
+        
+        # Add call amount to pot immediately
+        game.pot += call_amount
+        game.save()
     
     @staticmethod
     def _handle_bet(game, player_game, amount):
@@ -238,6 +246,8 @@ class GameService:
         player_game.total_bet += bet_amount
         player_game.save()
         
+        # Add bet amount to pot immediately
+        game.pot += bet_amount
         game.current_bet = bet_amount
         game.save()
     
@@ -266,6 +276,8 @@ class GameService:
         player_game.total_bet += raise_amount
         player_game.save()
         
+        # Add raise amount to pot immediately
+        game.pot += raise_amount
         game.current_bet = total_bet
         game.save()
     
@@ -317,22 +329,14 @@ class GameService:
         game.save()
         
         # Check if betting round is complete
-        betting_complete = True
-        current_bet = game.current_bet
+        # Get the last action to see if we need to track who started betting this round
+        last_action = GameAction.objects.filter(player_game__game=game).order_by('-timestamp').first()
         
-        # Round is complete when all active players have matched the current bet or are all-in
-        for pg in active_players:
-            if pg.current_bet < current_bet and pg.stack > 0:
-                betting_complete = False
-                break
+        # In preflop, betting round ends when action returns to big blind (if they haven't acted beyond posting blind)
+        # In other phases, betting round ends when all players have matched the current bet
+        betting_complete = GameService._is_betting_round_complete(game, active_players)
         
-        # Check if we've completed a full round (everyone has had a chance to act)
-        # This happens when we're back to the player who started the betting round
         if betting_complete:
-            # In preflop, the betting round ends when action returns to the big blind
-            # In other phases, it ends when action returns to the first player to act
-            
-            # For simplicity, if all bets are matched and we have active players, advance phase
             if len(active_players) > 1:
                 GameService._move_to_next_phase(game)
             else:
@@ -340,18 +344,46 @@ class GameService:
                 GameService._end_hand(game)
     
     @staticmethod
+    def _is_betting_round_complete(game, active_players):
+        """Check if the current betting round is complete."""
+        current_bet = game.current_bet
+        
+        # First check: all active players must have matched the current bet or be all-in
+        for pg in active_players:
+            if pg.current_bet < current_bet and pg.stack > 0:
+                return False
+        
+        # Second check: all players who can act must have had a chance to act this round
+        # Get all actions in the current phase
+        current_phase_actions = GameAction.objects.filter(
+            player_game__game=game,
+            player_game__is_active=True,
+            phase=game.phase
+        ).order_by('timestamp')
+        
+        # Simplified logic: all active players must have acted in the current phase
+        for pg in active_players:
+            player_actions = current_phase_actions.filter(player_game=pg)
+            if not player_actions.exists():
+                return False
+        
+        return True
+    
+    @staticmethod
     @transaction.atomic
     def _move_to_next_phase(game):
         """Move to the next phase of the game."""
-        # Add all bets to the pot
+        # Reset current bets (pot already updated during betting)
         active_players = PlayerGame.objects.filter(game=game, is_active=True)
         for pg in active_players:
-            game.pot += pg.current_bet
             pg.current_bet = 0
             pg.save()
         
         # Reset current bet
         game.current_bet = 0
+        
+        # Clear actions from previous phase to reset action tracking
+        # Note: We keep actions for history but track per-phase actions differently
         
         # Deal community cards based on current phase
         if game.phase == 'PREFLOP':
@@ -399,20 +431,28 @@ class GameService:
     @staticmethod
     def _get_game_deck(game):
         """Get a deck with the appropriate cards removed."""
-        # Create a new deck
+        # Create a new deck and shuffle it for randomness
         deck = Deck()
+        deck.shuffle()
         
         # Remove community cards
         community_cards = game.get_community_cards()
         for card_str in community_cards:
-            card = Card(card_str[0:-1], card_str[-1])
-            deck.cards.remove(card)
+            # Handle parsing - rank can be 1-2 characters, suit is always last
+            rank = card_str[:-1]
+            suit = card_str[-1]
+            card = Card(rank, suit)
+            if card in deck.cards:
+                deck.cards.remove(card)
         
         # Remove player cards
         player_games = PlayerGame.objects.filter(game=game)
         for pg in player_games:
             for card_str in pg.get_cards():
-                card = Card(card_str[0:-1], card_str[-1])
+                # Handle parsing - rank can be 1-2 characters, suit is always last
+                rank = card_str[:-1]
+                suit = card_str[-1]
+                card = Card(rank, suit)
                 if card in deck.cards:
                     deck.cards.remove(card)
         
@@ -429,8 +469,24 @@ class GameService:
             winner = active_players.first()
             winner.stack += game.pot
             winner.save()
+            
+            # Store winner information
+            winner_data = {
+                'type': 'single_winner',
+                'winners': [{
+                    'player_name': winner.player.user.username,
+                    'player_id': winner.player.id,
+                    'winning_amount': float(game.pot),
+                    'reason': 'All other players folded'
+                }],
+                'pot_amount': float(game.pot)
+            }
+            game.set_winner_info(winner_data)
             game.pot = 0
             game.save()
+            
+            # Broadcast game update
+            GameService.broadcast_game_update(game.id)
             return
         
         # Evaluate each player's hand
@@ -448,7 +504,7 @@ class GameService:
             hand_rank, hand_value, hand_name = HandEvaluator.evaluate_hand(all_cards)
             best_hands[pg.id] = (hand_rank, hand_value, hand_name, pg)
         
-        # Sort by hand strength
+        # Sort by hand strength (lower values are better)
         sorted_hands = sorted(best_hands.values(), key=lambda x: (x[0], x[1]))
         
         # Find winners (players with the same best hand)
@@ -461,9 +517,33 @@ class GameService:
             winner.stack += win_amount
             winner.save()
         
+        # Store winner information
+        winner_data = {
+            'type': 'showdown_winner',
+            'winners': [{
+                'player_name': winner.player.user.username,
+                'player_id': winner.player.id,
+                'winning_amount': float(win_amount),
+                'hand_name': best_hand[2],
+                'hole_cards': winner.get_cards()
+            } for winner in winners],
+            'pot_amount': float(game.pot),
+            'community_cards': game.get_community_cards(),
+            'all_hands': [{
+                'player_name': pg.player.user.username,
+                'hand_name': hand_name,
+                'hole_cards': pg.get_cards(),
+                'hand_rank': hand_rank
+            } for hand_rank, hand_value, hand_name, pg in sorted_hands]
+        }
+        game.set_winner_info(winner_data)
+        
         # Reset pot
         game.pot = 0
         game.save()
+        
+        # Start new hand
+        GameService._start_new_hand(game)
         
         # Broadcast game update
         GameService.broadcast_game_update(game.id)
@@ -476,14 +556,115 @@ class GameService:
         if winner:
             winner.stack += game.pot
             winner.save()
+            
+            # Store winner information
+            winner_data = {
+                'type': 'single_winner',
+                'winners': [{
+                    'player_name': winner.player.user.username,
+                    'player_id': winner.player.id,
+                    'winning_amount': float(game.pot),
+                    'reason': 'All other players folded'
+                }],
+                'pot_amount': float(game.pot)
+            }
+            game.set_winner_info(winner_data)
         
         # Reset pot
         game.pot = 0
         game.phase = 'SHOWDOWN'
         game.save()
         
+        # Start new hand
+        GameService._start_new_hand(game)
+        
         # Broadcast game update
         GameService.broadcast_game_update(game.id)
+
+    @staticmethod
+    @transaction.atomic
+    def _start_new_hand(game):
+        """Start a new hand after the previous one ended."""
+        # Check if we have enough players with money to continue
+        player_games = PlayerGame.objects.filter(game=game)
+        players_with_money = [pg for pg in player_games if pg.stack > 0]
+        
+        if len(players_with_money) < 2:
+            # End the game if not enough players have money
+            game.status = 'FINISHED'
+            game.save()
+            return
+        
+        # Reset players who have money to active and clear their cards
+        for pg in player_games:
+            if pg.stack > 0:
+                pg.is_active = True
+                pg.cards = None
+                pg.current_bet = 0
+                pg.total_bet = 0
+                pg.save()
+            else:
+                pg.is_active = False
+                pg.save()
+        
+        # Get active players (those with money)
+        active_players = PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position')
+        if active_players.count() >= 2:
+            current_dealer_pos = game.dealer_position
+            next_dealer_pos = (current_dealer_pos + 1) % active_players.count()
+            game.dealer_position = next_dealer_pos
+            
+            # Reset game state
+            game.phase = 'PREFLOP'
+            game.community_cards = None
+            game.current_bet = 0
+            game.winner_info = None
+            
+            # Deal new cards
+            deck = Deck()
+            deck.shuffle()
+            
+            # Deal cards to players
+            for pg in active_players:
+                cards = deck.deal(2)
+                card_strings = [str(card) for card in cards]
+                pg.set_cards(card_strings)
+                pg.save()
+            
+            # Post blinds
+            num_players = active_players.count()
+            small_blind_pos = (game.dealer_position + 1) % num_players
+            big_blind_pos = (game.dealer_position + 2) % num_players
+            
+            active_players_list = list(active_players)
+            
+            # Post small blind
+            small_blind_player = active_players_list[small_blind_pos]
+            small_blind_amount = min(game.table.small_blind, small_blind_player.stack)
+            small_blind_player.stack -= small_blind_amount
+            small_blind_player.current_bet = small_blind_amount
+            small_blind_player.total_bet = small_blind_amount
+            small_blind_player.save()
+            
+            # Post big blind
+            big_blind_player = active_players_list[big_blind_pos]
+            big_blind_amount = min(game.table.big_blind, big_blind_player.stack)
+            big_blind_player.stack -= big_blind_amount
+            big_blind_player.current_bet = big_blind_amount
+            big_blind_player.total_bet = big_blind_amount
+            big_blind_player.save()
+            
+            # Add blinds to pot immediately  
+            game.pot += small_blind_amount + big_blind_amount
+            
+            # Set current bet to big blind
+            game.current_bet = big_blind_amount
+            
+            # Set current player (after big blind)
+            current_player_pos = (big_blind_pos + 1) % num_players
+            game.current_player = active_players_list[current_player_pos].player
+            
+            game.save()
 
     @staticmethod
     def broadcast_game_update(game_id):

@@ -79,6 +79,20 @@ const authService = {
   isAuthenticated: () => {
     return !!localStorage.getItem("accessToken");
   },
+  
+  // Check if current user is admin
+  isAdmin: () => {
+    try {
+      const userStr = localStorage.getItem("user");
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        return user.is_superuser || user.is_staff || user.username === 'admin';
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  },
 };
 
 const playerService = {
@@ -91,6 +105,7 @@ const tableService = {
   getTables: () => apiClient.get(`/tables/`),
   getTable: (id) => apiClient.get(`/tables/${id}/`),
   createTable: (tableData) => apiClient.post(`/tables/`, tableData),
+  deleteTable: (id) => apiClient.delete(`/tables/${id}/`),
   joinTable: (id, buyIn) =>
     apiClient.post(`/tables/${id}/join_table/`, { buy_in: buyIn }),
 };
@@ -107,6 +122,9 @@ const gameService = {
   
   // Reset game state when it gets corrupted
   resetGameState: (id) => apiClient.post(`/games/${id}/reset_game_state/`),
+  
+  // Admin only - delete game regardless of status
+  deleteGame: (id) => apiClient.delete(`/games/${id}/`),
 
   // Updated WebSocket connection with better error handling
   connectToGameSocket: (

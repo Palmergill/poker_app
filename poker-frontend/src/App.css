@@ -463,6 +463,97 @@ button:disabled {
   padding-bottom: 10px;
 }
 
+/* Delete table button styles */
+.delete-table-btn {
+  background-color: #e74c3c !important;
+  margin-left: 0.5rem;
+}
+
+.delete-table-btn:hover {
+  background-color: #c0392b !important;
+}
+
+/* Delete game button styles */
+.delete-game-btn {
+  background-color: #e74c3c !important;
+  margin-left: 0.5rem;
+}
+
+.delete-game-btn:hover {
+  background-color: #c0392b !important;
+}
+
+/* Delete confirmation modal styles */
+.delete-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.delete-modal {
+  background-color: white;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.delete-modal h3 {
+  margin-bottom: 1rem;
+  color: #2c3e50;
+  text-align: center;
+}
+
+.delete-modal p {
+  margin-bottom: 1rem;
+  text-align: center;
+  color: #555;
+}
+
+.delete-warning {
+  color: #e74c3c !important;
+  font-weight: bold;
+}
+
+.delete-modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+.delete-modal-actions button {
+  width: auto;
+  min-width: 100px;
+  padding: 0.6rem 1.2rem;
+}
+
+.btn-secondary {
+  background-color: #95a5a6;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background-color: #7f8c8d;
+}
+
+.btn-danger {
+  background-color: #e74c3c;
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #c0392b;
+}
+
 /* Responsive adjustments */
 @media screen and (max-width: 768px) {
   .table-list-header {
@@ -476,5 +567,14 @@ button:disabled {
 
   .create-table {
     padding: 1.5rem;
+  }
+
+  .delete-modal {
+    margin: 1rem;
+    padding: 1.5rem;
+  }
+
+  .delete-modal-actions {
+    flex-direction: column;
   }
 }
