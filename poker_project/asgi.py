@@ -1,3 +1,4 @@
+# Updated ASGI configuration for poker_project/asgi.py
 """
 ASGI config for poker_project project.
 
@@ -10,16 +11,19 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 import os
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
+from poker_api.middleware import JWTAuthMiddleware
 import poker_api.routing
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'poker_project.settings')
 
 application = ProtocolTypeRouter({
     "http": get_asgi_application(),
-    "websocket": AuthMiddlewareStack(
-        URLRouter(
-            poker_api.routing.websocket_urlpatterns
+    "websocket": AllowedHostsOriginValidator(
+        JWTAuthMiddleware(
+            URLRouter(
+                poker_api.routing.websocket_urlpatterns
+            )
         )
     ),
 })

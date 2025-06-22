@@ -12,7 +12,9 @@ const PokerTable = () => {
   const [error, setError] = useState(null);
   const [actionType, setActionType] = useState("CHECK");
   const [betAmount, setBetAmount] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const socketRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
 
   useEffect(() => {
     const fetchGame = async () => {
@@ -24,6 +26,7 @@ const PokerTable = () => {
         // Connect to WebSocket after getting initial game state
         connectWebSocket(response.data.id);
       } catch (err) {
+        console.error("Failed to load game:", err);
         setError("Failed to load game");
         setLoading(false);
       }
@@ -36,33 +39,81 @@ const PokerTable = () => {
       if (socketRef.current) {
         socketRef.current.close();
       }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
     };
   }, [id]);
 
   const connectWebSocket = (gameId) => {
-    socketRef.current = gameService.connectToGameSocket(gameId, (data) => {
-      // Update game state when we receive WebSocket message
-      setGame(data);
-    });
+    // Check if WebSocket is supported
+    if (!gameService.isWebSocketSupported()) {
+      console.error("WebSocket is not supported in this browser");
+      setError("Real-time updates not supported in this browser");
+      return;
+    }
 
-    socketRef.current.onopen = () => {
-      console.log("WebSocket connected");
-    };
+    setConnectionStatus("connecting");
 
-    socketRef.current.onclose = () => {
-      console.log("WebSocket disconnected");
-    };
+    socketRef.current = gameService.connectToGameSocket(
+      gameId,
+      // onMessage
+      (data) => {
+        console.log("Game update received:", data);
+        setGame(data);
+        setConnectionStatus("connected");
+        setError(null); // Clear any previous errors
+      },
+      // onError
+      (errorMessage) => {
+        console.error("WebSocket error:", errorMessage);
+        setConnectionStatus("error");
+        setError(`Connection error: ${errorMessage}`);
 
-    socketRef.current.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
+        // Try to reconnect after 3 seconds
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+        }
+
+        reconnectTimeoutRef.current = setTimeout(() => {
+          console.log("Attempting to reconnect WebSocket...");
+          connectWebSocket(gameId);
+        }, 3000);
+      },
+      // onClose
+      (event) => {
+        setConnectionStatus("disconnected");
+
+        // Only try to reconnect if it wasn't a normal closure or authentication issue
+        if (event.code !== 1000 && event.code !== 4001 && event.code !== 4003) {
+          console.log(
+            "WebSocket closed unexpectedly, attempting to reconnect..."
+          );
+
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+          }
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectWebSocket(gameId);
+          }, 3000);
+        }
+      }
+    );
+
+    if (!socketRef.current) {
+      setConnectionStatus("error");
+      setError("Failed to create WebSocket connection");
+    }
   };
 
   const handleStartGame = async () => {
     try {
       await gameService.startGame(id);
+      // Game state will be updated via WebSocket
     } catch (err) {
-      setError("Failed to start game");
+      console.error("Failed to start game:", err);
+      setError(err.response?.data?.error || "Failed to start game");
     }
   };
 
@@ -71,19 +122,52 @@ const PokerTable = () => {
       await gameService.leaveGame(id);
       navigate("/tables");
     } catch (err) {
-      setError("Failed to leave game");
+      console.error("Failed to leave game:", err);
+      setError(err.response?.data?.error || "Failed to leave game");
     }
   };
 
   const handleAction = async () => {
     try {
       await gameService.takeAction(id, actionType, betAmount);
+      // Game state will be updated via WebSocket
       setError(null); // Clear any previous errors
     } catch (err) {
+      console.error("Failed to take action:", err);
       setError(
         `Failed to take action: ${err.response?.data?.error || err.message}`
       );
     }
+  };
+
+  const renderConnectionStatus = () => {
+    const statusColors = {
+      connected: "#4caf50",
+      connecting: "#ff9800",
+      disconnected: "#f44336",
+      error: "#f44336",
+    };
+
+    return (
+      <div
+        style={{
+          position: "fixed",
+          top: "10px",
+          right: "10px",
+          padding: "5px 10px",
+          borderRadius: "15px",
+          backgroundColor: statusColors[connectionStatus] || "#ccc",
+          color: "white",
+          fontSize: "12px",
+          zIndex: 1000,
+        }}
+      >
+        {connectionStatus === "connected" && "🟢 Connected"}
+        {connectionStatus === "connecting" && "🟡 Connecting..."}
+        {connectionStatus === "disconnected" && "🔴 Disconnected"}
+        {connectionStatus === "error" && "❌ Error"}
+      </div>
+    );
   };
 
   if (loading) {
@@ -98,22 +182,16 @@ const PokerTable = () => {
     return <div className="error">Game not found</div>;
   }
 
-  // Get current user info - try multiple ways
   const getCurrentUserInfo = () => {
     try {
-      // First try to get from localStorage
       const userStr = localStorage.getItem("user");
       if (userStr) {
         const user = JSON.parse(userStr);
         return user;
       }
 
-      // If not in localStorage, try to get from the access token
-      // The backend might be sending user info in the game data
       const token = localStorage.getItem("accessToken");
       if (token && game.players) {
-        // Look for the player that matches the current session
-        // This is a fallback - ideally the user info should be in localStorage
         return null;
       }
 
@@ -130,7 +208,6 @@ const PokerTable = () => {
     const currentUser = getCurrentUserInfo();
     if (!currentUser) return null;
 
-    // Try to match by user ID first
     if (currentUser.id) {
       const playerById = game.players.find(
         (p) => p.player.user.id === currentUser.id
@@ -138,7 +215,6 @@ const PokerTable = () => {
       if (playerById) return playerById;
     }
 
-    // Try to match by username as fallback
     if (currentUser.username) {
       const playerByUsername = game.players.find(
         (p) => p.player.user.username === currentUser.username
@@ -274,7 +350,6 @@ const PokerTable = () => {
       const isTurn =
         game.current_player && game.current_player.id === player.player.id;
 
-      // Check if this is the current user by multiple methods
       let isCurrentUser = false;
       if (currentUser) {
         if (currentUser.id && player.player.user.id === currentUser.id) {
@@ -287,11 +362,10 @@ const PokerTable = () => {
         }
       }
 
-      // Calculate position based on seat number and total seats
       const totalSeats = game.table.max_players;
       const angle =
         (player.seat_position / totalSeats) * 2 * Math.PI - Math.PI / 2;
-      const radius = 280; // Distance from center
+      const radius = 280;
 
       const style = {
         position: "absolute",
@@ -322,11 +396,9 @@ const PokerTable = () => {
             {player.cards && player.cards.length > 0 && (
               <div className="player-cards">
                 {player.cards.map((card, cardIndex) => {
-                  // Show cards for current user or during showdown
                   const showCard = isCurrentUser || game.phase === "SHOWDOWN";
 
                   if (!showCard) {
-                    // Hidden card
                     return (
                       <div key={cardIndex} className="card hidden">
                         <div className="card-back"></div>
@@ -334,11 +406,9 @@ const PokerTable = () => {
                     );
                   }
 
-                  // Parse card string (e.g., "AS" -> rank: "A", suit: "S")
                   const rank = card.slice(0, -1);
                   const suit = card.slice(-1);
 
-                  // Unicode suit symbols
                   const suitSymbols = {
                     S: "♠",
                     H: "♥",
@@ -406,11 +476,9 @@ const PokerTable = () => {
     return (
       <div className="community-cards">
         {game.community_cards.map((card, index) => {
-          // Parse card string (e.g., "AS" -> rank: "A", suit: "S")
           const rank = card.slice(0, -1);
           const suit = card.slice(-1);
 
-          // Unicode suit symbols
           const suitSymbols = {
             S: "♠",
             H: "♥",
@@ -457,8 +525,8 @@ const PokerTable = () => {
 
   return (
     <div className="poker-game-container">
+      {renderConnectionStatus()}
       {renderGameInfo()}
-
       <div className="poker-table">
         <div className="table-felt">
           {renderCommunityCards()}
@@ -466,10 +534,8 @@ const PokerTable = () => {
           {renderPlayers()}
         </div>
       </div>
-
       {renderActionButtons()}
       {renderGameLogs()}
-
       {error && <div className="error-message">{error}</div>}
     </div>
   );

@@ -117,26 +117,32 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
-    @action(detail=True, methods=['post'])
-    def perform_action(self, request, pk=None):
-        """Take an action in the game"""
-        game = self.get_object()
-        player, created = Player.objects.get_or_create(user=request.user)
+@action(detail=True, methods=['post'], url_path='action')
+def perform_action(self, request, pk=None):
+    """Take an action in the game"""
+    game = self.get_object()
+    player, created = Player.objects.get_or_create(user=request.user)
+    
+    # Validate action
+    serializer = GameActionRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    action_type = serializer.validated_data['action_type']
+    amount = serializer.validated_data.get('amount', 0)
+    
+    try:
+        # Process the action
+        updated_game = GameService.process_action(game.id, player.id, action_type, amount)
         
-        # Validate action
-        serializer = GameActionRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Broadcast the update to all connected clients
+        GameService.broadcast_game_update(game.id)
         
-        action_type = serializer.validated_data['action_type']
-        amount = serializer.validated_data.get('amount', 0)
-        
-        try:
-            GameService.process_action(game.id, player.id, action_type, amount)
-            game_serializer = self.get_serializer(game)
-            return Response(game_serializer.data)
-        except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        # Return updated game state
+        game_serializer = self.get_serializer(updated_game)
+        return Response(game_serializer.data)
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
     def leave(self, request, pk=None):

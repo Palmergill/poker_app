@@ -1,131 +1,193 @@
-#!/usr/bin/env python
-import os
+#!/usr/bin/env python3
+"""
+Poker App Startup Script
+This script helps you start all required services for the poker application.
+"""
+
 import subprocess
-import time
 import sys
-import signal
-import threading
+import time
+import os
+import redis
 from pathlib import Path
 
-# Configuration
-BACKEND_DIR = Path(".")  # The Django project root directory
-FRONTEND_DIR = Path("poker-frontend")  # The React project directory
+def check_redis():
+    """Check if Redis is running."""
+    try:
+        r = redis.Redis(host='localhost', port=6379, db=0)
+        r.ping()
+        print("✅ Redis is running")
+        return True
+    except redis.ConnectionError:
+        print("❌ Redis is not running")
+        return False
 
-class BackendServer(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.process = None
-        self.daemon = True
+def start_redis():
+    """Attempt to start Redis."""
+    print("🔄 Attempting to start Redis...")
     
-    def run(self):
-        os.chdir(BACKEND_DIR)
-        env = os.environ.copy()
-        
-        # Check if virtual environment exists, if not create it
-        if not Path("venv").exists():
-            print("Setting up virtual environment...")
-            subprocess.run([sys.executable, "-m", "venv", "venv"], check=True)
-        
-        # Activate virtual environment
-        if sys.platform == 'win32':
-            python_exe = Path("venv/Scripts/python.exe")
-            pip_exe = Path("venv/Scripts/pip.exe")
-        else:
-            python_exe = Path("venv/bin/python")
-            pip_exe = Path("venv/bin/pip")
-        
-        # Check if dependencies are installed
-        print("Installing backend dependencies...")
-        subprocess.run([pip_exe, "install", "-r", "requirements.txt"])
-        
-        # Check if migrations need to be applied
-        print("Applying migrations...")
-        subprocess.run([python_exe, "manage.py", "migrate"])
-        
-        # Start Django server
-        print("\n🚀 Starting Django backend server...\n")
-        self.process = subprocess.Popen([python_exe, "manage.py", "runserver"])
-        self.process.wait()
+    # Try different Redis startup commands
+    redis_commands = [
+        ['redis-server'],
+        ['brew', 'services', 'start', 'redis'],  # macOS
+        ['sudo', 'systemctl', 'start', 'redis-server'],  # Linux
+        ['docker', 'run', '-d', '-p', '6379:6379', '--name', 'redis', 'redis:alpine']  # Docker
+    ]
     
-    def stop(self):
-        if self.process:
-            self.process.terminate()
-            self.process.wait()
-
-class FrontendServer(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.process = None
-        self.daemon = True
-    
-    def run(self):
-        os.chdir(FRONTEND_DIR)
-        env = os.environ.copy()
-        
-        # Check if Node.js is installed
+    for cmd in redis_commands:
         try:
-            subprocess.run(["node", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        except (subprocess.SubprocessError, FileNotFoundError):
-            print("❌ Node.js is not installed. Please install Node.js and try again.")
-            return
-        
-        # Install dependencies if needed
-        if not Path("node_modules").exists():
-            print("Installing frontend dependencies...")
-            subprocess.run(["npm", "install"])
-        
-        # Start React dev server
-        print("\n🚀 Starting React frontend server...\n")
-        self.process = subprocess.Popen(["npm", "start"])
-        self.process.wait()
+            subprocess.run(cmd, check=True, capture_output=True)
+            time.sleep(2)  # Give Redis time to start
+            if check_redis():
+                print(f"✅ Redis started with command: {' '.join(cmd)}")
+                return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
     
-    def stop(self):
-        if self.process:
-            self.process.terminate()
-            self.process.wait()
+    return False
 
-def create_requirements_file():
-    """Create requirements.txt file if it doesn't exist"""
-    if not Path(BACKEND_DIR / "requirements.txt").exists():
-        with open(BACKEND_DIR / "requirements.txt", "w") as f:
-            f.write("""Django>=4.2.0
-djangorestframework>=3.14.0
-djangorestframework-simplejwt>=5.2.2
-django-cors-headers>=4.0.0
-channels>=4.0.0
-channels-redis>=4.1.0
-psycopg2-binary>=2.9.5
-""")
-        print("Created requirements.txt file")
+def install_requirements():
+    """Install Python requirements."""
+    print("📦 Installing Python requirements...")
+    try:
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], check=True)
+        print("✅ Python requirements installed")
+        return True
+    except subprocess.CalledProcessError:
+        print("❌ Failed to install Python requirements")
+        return False
+
+def run_migrations():
+    """Run Django migrations."""
+    print("🔄 Running Django migrations...")
+    try:
+        subprocess.run([sys.executable, 'manage.py', 'migrate'], check=True)
+        print("✅ Migrations completed")
+        return True
+    except subprocess.CalledProcessError:
+        print("❌ Migration failed")
+        return False
+
+def create_superuser():
+    """Create Django superuser if it doesn't exist."""
+    print("👤 Checking for superuser...")
+    try:
+        # Check if superuser exists
+        result = subprocess.run([
+            sys.executable, 'manage.py', 'shell', '-c',
+            "from django.contrib.auth.models import User; print(User.objects.filter(is_superuser=True).exists())"
+        ], capture_output=True, text=True)
+        
+        if 'True' not in result.stdout:
+            print("Creating superuser (admin/admin)...")
+            subprocess.run([
+                sys.executable, 'manage.py', 'shell', '-c',
+                "from django.contrib.auth.models import User; User.objects.create_superuser('admin', 'admin@example.com', 'admin') if not User.objects.filter(username='admin').exists() else print('Admin user already exists')"
+            ], check=True)
+            print("✅ Superuser created (username: admin, password: admin)")
+        else:
+            print("✅ Superuser already exists")
+        return True
+    except subprocess.CalledProcessError:
+        print("❌ Failed to create superuser")
+        return False
+
+def start_django():
+    """Start Django development server."""
+    print("🚀 Starting Django server...")
+    try:
+        # Start Django in the background
+        django_process = subprocess.Popen([sys.executable, 'manage.py', 'runserver'])
+        return django_process
+    except Exception as e:
+        print(f"❌ Failed to start Django: {e}")
+        return None
+
+def start_react():
+    """Start React development server."""
+    print("⚛️ Starting React server...")
+    try:
+        os.chdir('poker-frontend')
+        
+        # Install npm packages if needed
+        if not os.path.exists('node_modules'):
+            print("📦 Installing npm packages...")
+            subprocess.run(['npm', 'install'], check=True)
+        
+        # Start React server
+        react_process = subprocess.Popen(['npm', 'start'])
+        os.chdir('..')
+        return react_process
+    except Exception as e:
+        print(f"❌ Failed to start React: {e}")
+        return None
 
 def main():
-    create_requirements_file()
+    """Main startup function."""
+    print("🎰 Poker App Startup Script")
+    print("=" * 40)
     
-    backend = BackendServer()
-    frontend = FrontendServer()
+    # Check if we're in the right directory
+    if not os.path.exists('manage.py'):
+        print("❌ Please run this script from the Django project root directory")
+        sys.exit(1)
     
-    # Start servers
-    backend.start()
-    time.sleep(2)  # Give backend a chance to start first
-    frontend.start()
+    # Step 1: Check/Start Redis
+    if not check_redis():
+        if not start_redis():
+            print("❌ Could not start Redis. Please start it manually:")
+            print("   - macOS: brew services start redis")
+            print("   - Linux: sudo systemctl start redis-server")
+            print("   - Docker: docker run -d -p 6379:6379 --name redis redis:alpine")
+            sys.exit(1)
     
-    # Handle termination
-    def signal_handler(sig, frame):
-        print("\nShutting down servers...")
-        frontend.stop()
-        backend.stop()
-        sys.exit(0)
+    # Step 2: Install requirements
+    if not install_requirements():
+        sys.exit(1)
     
-    signal.signal(signal.SIGINT, signal_handler)
+    # Step 3: Run migrations
+    if not run_migrations():
+        sys.exit(1)
+    
+    # Step 4: Create superuser
+    create_superuser()
+    
+    # Step 5: Start Django
+    django_process = start_django()
+    if not django_process:
+        sys.exit(1)
+    
+    # Step 6: Start React
+    react_process = start_react()
+    if not react_process:
+        django_process.terminate()
+        sys.exit(1)
+    
+    print("\n🎉 All services started successfully!")
+    print("=" * 40)
+    print("📝 Application URLs:")
+    print("   - Django Admin: http://localhost:8000/admin/")
+    print("   - Django API: http://localhost:8000/api/")
+    print("   - React App: http://localhost:3000/")
+    print("\n👤 Default admin credentials: admin/admin")
+    print("\n⏹️  Press Ctrl+C to stop all services")
     
     try:
-        # Keep main thread alive
+        # Wait for processes
         while True:
-            time.sleep(0.5)
+            time.sleep(1)
+            # Check if processes are still running
+            if django_process.poll() is not None:
+                print("❌ Django process stopped")
+                break
+            if react_process.poll() is not None:
+                print("❌ React process stopped")
+                break
     except KeyboardInterrupt:
-        print("\nShutting down servers...")
-        frontend.stop()
-        backend.stop()
+        print("\n🛑 Shutting down services...")
+        django_process.terminate()
+        react_process.terminate()
+        print("✅ All services stopped")
 
 if __name__ == "__main__":
     main()
