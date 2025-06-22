@@ -127,9 +127,29 @@ const PokerTable = () => {
     }
   };
 
-  const handleAction = async () => {
+  const handleRefreshGame = async () => {
     try {
-      await gameService.takeAction(id, actionType, betAmount);
+      setError(null);
+      const response = await gameService.resetGameState(id);
+      setGame(response.data.game);
+      setError("✅ Game state refreshed successfully");
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setError(null), 3000);
+    } catch (err) {
+      console.error("Failed to refresh game:", err);
+      setError(
+        `Failed to refresh game: ${err.response?.data?.error || err.message}`
+      );
+    }
+  };
+
+  const handleAction = async (actionTypeParam = null, amountParam = null) => {
+    try {
+      const actionToUse = actionTypeParam || actionType;
+      const amountToUse = amountParam !== null ? amountParam : betAmount;
+      
+      await gameService.takeAction(id, actionToUse, amountToUse);
       // Game state will be updated via WebSocket
       setError(null); // Clear any previous errors
     } catch (err) {
@@ -187,14 +207,11 @@ const PokerTable = () => {
       const userStr = localStorage.getItem("user");
       if (userStr) {
         const user = JSON.parse(userStr);
+        console.log("Current user info:", user);
         return user;
       }
 
-      const token = localStorage.getItem("accessToken");
-      if (token && game.players) {
-        return null;
-      }
-
+      console.warn("No user info found in localStorage");
       return null;
     } catch (e) {
       console.error("Error getting user info:", e);
@@ -298,8 +315,7 @@ const PokerTable = () => {
               <button
                 disabled={betAmount < minBet || betAmount > playerStack}
                 onClick={() => {
-                  setActionType("BET");
-                  handleAction();
+                  handleAction("BET", betAmount);
                 }}
               >
                 Bet ${betAmount || 0}
@@ -325,8 +341,7 @@ const PokerTable = () => {
                   betAmount < minRaise || betAmount > playerStack + playerBet
                 }
                 onClick={() => {
-                  setActionType("RAISE");
-                  handleAction();
+                  handleAction("RAISE", betAmount);
                 }}
               >
                 Raise to ${betAmount || 0}
@@ -354,13 +369,29 @@ const PokerTable = () => {
       if (currentUser) {
         if (currentUser.id && player.player.user.id === currentUser.id) {
           isCurrentUser = true;
+          console.log(`Player ${player.player.user.username} is current user (matched by ID)`);
         } else if (
           currentUser.username &&
           player.player.user.username === currentUser.username
         ) {
           isCurrentUser = true;
+          console.log(`Player ${player.player.user.username} is current user (matched by username)`);
         }
       }
+      
+      // Handle new card data structure
+      let playerCards = [];
+      if (player.cards) {
+        if (Array.isArray(player.cards)) {
+          // Old format - array of card strings
+          playerCards = player.cards;
+        } else if (player.cards.cards) {
+          // New format - object with cards array and owner info
+          playerCards = player.cards.cards;
+        }
+      }
+      
+      console.log(`Player ${player.player.user.username}: isCurrentUser=${isCurrentUser}, hasCards=${playerCards && playerCards.length > 0}, cards:`, playerCards);
 
       const totalSeats = game.table.max_players;
       const angle =
@@ -393,9 +424,9 @@ const PokerTable = () => {
               <div className="player-bet">${player.current_bet}</div>
             )}
 
-            {player.cards && player.cards.length > 0 && (
+            {playerCards && playerCards.length > 0 && (
               <div className="player-cards">
-                {player.cards.map((card, cardIndex) => {
+                {playerCards.map((card, cardIndex) => {
                   const showCard = isCurrentUser || game.phase === "SHOWDOWN";
 
                   if (!showCard) {
@@ -462,6 +493,11 @@ const PokerTable = () => {
       <div className="game-actions">
         {game.status === "WAITING" && (
           <button onClick={handleStartGame}>Start Game</button>
+        )}
+        {game.status === "PLAYING" && (
+          <button onClick={handleRefreshGame} className="refresh-button">
+            Refresh Game
+          </button>
         )}
         <button onClick={handleLeaveGame}>Leave Table</button>
       </div>

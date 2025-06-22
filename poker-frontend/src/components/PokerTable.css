@@ -38,6 +38,14 @@
   background-color: #2980b9;
 }
 
+.refresh-button {
+  background-color: #f39c12 !important;
+}
+
+.refresh-button:hover {
+  background-color: #e67e22 !important;
+}
+
 .poker-table {
   position: relative;
   width: 800px;

@@ -13,6 +13,9 @@ from .services.game_service import GameService
 from django.contrib.auth.models import User
 from django.db import transaction
 from decimal import Decimal
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PokerTableViewSet(viewsets.ModelViewSet):
     queryset = PokerTable.objects.all()
@@ -112,37 +115,115 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
         
         try:
             GameService.start_game(game.id)
+            GameService.broadcast_game_update(game.id)
             serializer = self.get_serializer(game)
             return Response(serializer.data)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
-@action(detail=True, methods=['post'], url_path='action')
-def perform_action(self, request, pk=None):
-    """Take an action in the game"""
-    game = self.get_object()
-    player, created = Player.objects.get_or_create(user=request.user)
-    
-    # Validate action
-    serializer = GameActionRequestSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    action_type = serializer.validated_data['action_type']
-    amount = serializer.validated_data.get('amount', 0)
-    
-    try:
-        # Process the action
-        updated_game = GameService.process_action(game.id, player.id, action_type, amount)
+    @action(detail=True, methods=['post'], url_path='action')
+    def perform_action(self, request, pk=None):
+        """Take an action in the game"""
+        game = self.get_object()
+        player, created = Player.objects.get_or_create(user=request.user)
         
-        # Broadcast the update to all connected clients
-        GameService.broadcast_game_update(game.id)
+        # Validate action
+        serializer = GameActionRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        # Return updated game state
-        game_serializer = self.get_serializer(updated_game)
-        return Response(game_serializer.data)
-    except ValueError as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        action_type = serializer.validated_data['action_type']
+        amount = serializer.validated_data.get('amount', 0)
+        
+        try:
+            # Process the action
+            updated_game = GameService.process_action(game.id, player.id, action_type, amount)
+            
+            # Broadcast the update to all connected clients
+            GameService.broadcast_game_update(game.id)
+            
+            # Return updated game state
+            game_serializer = self.get_serializer(updated_game)
+            return Response(game_serializer.data)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def reset_game_state(self, request, pk=None):
+        """Reset corrupted game state (debug utility)"""
+        game = self.get_object()
+        
+        if game.status != 'PLAYING':
+            return Response({'error': 'Game is not in progress'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get all active players
+            active_players = list(PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position'))
+            
+            if len(active_players) < 2:
+                return Response({'error': 'Not enough active players'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Reset current player to first active player
+            game.current_player = active_players[0].player
+            
+            # If no current bet, reset to first player after dealer
+            if game.current_bet == 0:
+                dealer_pos = game.dealer_position
+                # Find first active player after dealer
+                for i in range(1, len(active_players) + 1):
+                    next_pos = (dealer_pos + i) % len(active_players)
+                    if next_pos < len(active_players):
+                        game.current_player = active_players[next_pos].player
+                        break
+            
+            game.save()
+            
+            # Broadcast update
+            GameService.broadcast_game_update(game.id)
+            
+            serializer = self.get_serializer(game)
+            return Response({
+                'message': 'Game state reset successfully',
+                'game': serializer.data
+            })
+            
+        except Exception as e:
+            return Response({'error': f'Failed to reset game state: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def debug_state(self, request, pk=None):
+        """Get detailed game state for debugging"""
+        game = self.get_object()
+        
+        active_players = list(PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position'))
+        all_players = list(PlayerGame.objects.filter(game=game).order_by('seat_position'))
+        
+        debug_info = {
+            'game_id': game.id,
+            'status': game.status,
+            'phase': game.phase,
+            'current_player_id': game.current_player_id,
+            'current_player_name': game.current_player.user.username if game.current_player else None,
+            'current_bet': str(game.current_bet),
+            'pot': str(game.pot),
+            'dealer_position': game.dealer_position,
+            'active_players_count': len(active_players),
+            'total_players_count': len(all_players),
+            'active_players': [
+                {
+                    'id': pg.player.id,
+                    'username': pg.player.user.username,
+                    'seat_position': pg.seat_position,
+                    'stack': str(pg.stack),
+                    'current_bet': str(pg.current_bet),
+                    'total_bet': str(pg.total_bet),
+                    'is_active': pg.is_active
+                }
+                for pg in all_players
+            ]
+        }
+        
+        return Response(debug_info)
     
     @action(detail=True, methods=['post'])
     def leave(self, request, pk=None):

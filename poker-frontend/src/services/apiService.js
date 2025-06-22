@@ -104,6 +104,9 @@ const gameService = {
   leaveGame: (id) => apiClient.post(`/games/${id}/leave/`),
   takeAction: (id, actionType, amount = 0) =>
     apiClient.post(`/games/${id}/action/`, { action_type: actionType, amount }),
+  
+  // Reset game state when it gets corrupted
+  resetGameState: (id) => apiClient.post(`/games/${id}/reset_game_state/`),
 
   // Updated WebSocket connection with better error handling
   connectToGameSocket: (

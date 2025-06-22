@@ -124,6 +124,9 @@ class GameService:
         # Save game state
         game.save()
         
+        # Broadcast game update
+        GameService.broadcast_game_update(game_id)
+        
         return game
     
     @staticmethod
@@ -276,16 +279,41 @@ class GameService:
             GameService._end_hand(game)
             return
         
-        # Find current player's position
-        current_pos = 0
+        # Find current player's position in the active players list
+        current_pos = None
         for i, pg in enumerate(active_players):
             if pg.player_id == game.current_player_id:
                 current_pos = i
                 break
         
-        # Move to next player
-        next_pos = (current_pos + 1) % len(active_players)
-        game.current_player = active_players[next_pos].player
+        # If current player is not found in active players (e.g., they just folded),
+        # find the next active player by seat position
+        if current_pos is None:
+            # Get the current player's seat position
+            try:
+                current_player_game = PlayerGame.objects.get(game=game, player_id=game.current_player_id)
+                current_seat = current_player_game.seat_position
+                
+                # Find the next active player by seat position
+                next_player = None
+                for pg in active_players:
+                    if pg.seat_position > current_seat:
+                        next_player = pg
+                        break
+                
+                # If no player found after current seat, wrap around to first active player
+                if next_player is None:
+                    next_player = active_players[0]
+                    
+                game.current_player = next_player.player
+            except PlayerGame.DoesNotExist:
+                # Fallback: set to first active player
+                game.current_player = active_players[0].player
+        else:
+            # Move to next player in the active players list
+            next_pos = (current_pos + 1) % len(active_players)
+            game.current_player = active_players[next_pos].player
+        
         game.save()
         
         # Check if betting round is complete
@@ -298,9 +326,18 @@ class GameService:
                 betting_complete = False
                 break
         
-        # If round is complete, move to next phase
-        if betting_complete and game.current_player_id == active_players[0].player_id:
-            GameService._move_to_next_phase(game)
+        # Check if we've completed a full round (everyone has had a chance to act)
+        # This happens when we're back to the player who started the betting round
+        if betting_complete:
+            # In preflop, the betting round ends when action returns to the big blind
+            # In other phases, it ends when action returns to the first player to act
+            
+            # For simplicity, if all bets are matched and we have active players, advance phase
+            if len(active_players) > 1:
+                GameService._move_to_next_phase(game)
+            else:
+                # Only one player left, end the hand
+                GameService._end_hand(game)
     
     @staticmethod
     @transaction.atomic
@@ -355,6 +392,9 @@ class GameService:
                 break
         
         game.save()
+        
+        # Broadcast game update
+        GameService.broadcast_game_update(game.id)
     
     @staticmethod
     def _get_game_deck(game):
@@ -424,6 +464,9 @@ class GameService:
         # Reset pot
         game.pot = 0
         game.save()
+        
+        # Broadcast game update
+        GameService.broadcast_game_update(game.id)
     
     @staticmethod
     def _end_hand(game):
@@ -438,22 +481,28 @@ class GameService:
         game.pot = 0
         game.phase = 'SHOWDOWN'
         game.save()
+        
+        # Broadcast game update
+        GameService.broadcast_game_update(game.id)
 
     @staticmethod
     def broadcast_game_update(game_id):
         """
         Broadcast game update to all connected clients.
+        For card visibility, we'll send all data and let the frontend handle visibility.
         """
         from ..serializers import GameSerializer
         
         game = Game.objects.get(id=game_id)
+        
+        # Create serializer without user context - cards will be handled on frontend
         serializer = GameSerializer(game)
         
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f'game_{game_id}',
             {
-                'type': 'game_update',
+                'type': 'game_update', 
                 'data': serializer.data
             }
         )

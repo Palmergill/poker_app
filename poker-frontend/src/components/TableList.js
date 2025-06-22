@@ -48,10 +48,20 @@ const TableList = () => {
 
   return (
     <div className="table-list">
-      <h2>Available Poker Tables</h2>
+      <div className="table-list-header">
+        <h2>Available Poker Tables</h2>
+        <Link to="/tables/create" className="btn btn-success create-table-btn">
+          Create New Table
+        </Link>
+      </div>
 
       {tables.length === 0 ? (
-        <p>No tables available</p>
+        <div className="no-tables">
+          <p>No tables available yet</p>
+          <Link to="/tables/create" className="btn btn-primary">
+            Create the First Table
+          </Link>
+        </div>
       ) : (
         <div className="table-grid">
           {tables.map((table) => {

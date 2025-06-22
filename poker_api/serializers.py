@@ -47,13 +47,37 @@ class PlayerGameSerializer(serializers.ModelSerializer):
         fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cards', 'current_bet', 'total_bet']
     
     def get_cards(self, obj):
-        # Only show cards to the owning player or in showdown
+        # For WebSocket updates (no request context), send all cards and let frontend handle visibility
+        # For API requests, only show cards to the owning player or in showdown
         request = self.context.get('request')
-        if request and request.user == obj.player.user:
-            return obj.get_cards()
+        
+        if not request:
+            # No request context (WebSocket update) - send cards with user info for frontend filtering
+            return {
+                'cards': obj.get_cards(),
+                'owner_id': obj.player.user.id,
+                'owner_username': obj.player.user.username
+            }
+        
+        if request.user == obj.player.user:
+            return {
+                'cards': obj.get_cards(),
+                'owner_id': obj.player.user.id,
+                'owner_username': obj.player.user.username
+            }
+        
         if obj.game.phase == 'SHOWDOWN' and obj.is_active:
-            return obj.get_cards()
-        return []
+            return {
+                'cards': obj.get_cards(),
+                'owner_id': obj.player.user.id,
+                'owner_username': obj.player.user.username
+            }
+        
+        return {
+            'cards': [],
+            'owner_id': obj.player.user.id,
+            'owner_username': obj.player.user.username
+        }
 
 class GameActionSerializer(serializers.ModelSerializer):
     player = serializers.SerializerMethodField()
