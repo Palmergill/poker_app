@@ -1,0 +1,35 @@
+# Testing requirements for poker application
+
+# Core testing frameworks
+pytest>=7.0.0
+pytest-django>=4.5.0
+pytest-asyncio>=0.20.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Test utilities
+factory-boy>=3.2.0
+freezegun>=1.2.0
+responses>=0.22.0
+
+# Coverage reporting
+coverage>=7.0.0
+coverage[toml]>=7.0.0
+
+# WebSocket testing
+channels[daphne]>=4.0.0
+
+# Database testing
+pytest-postgresql>=4.1.0  # Optional for isolated DB tests
+
+# Performance testing
+pytest-benchmark>=4.0.0
+
+# Test reporting
+pytest-html>=3.1.0
+pytest-json-report>=1.5.0
+
+# Code quality (optional)
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0

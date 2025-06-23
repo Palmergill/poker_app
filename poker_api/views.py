@@ -4,10 +4,10 @@ from rest_framework.response import Response
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
-from .models import PokerTable, Player, Game, PlayerGame
+from .models import PokerTable, Player, Game, PlayerGame, HandHistory
 from .serializers import (
     PokerTableSerializer, PlayerSerializer, GameSerializer, PlayerGameSerializer,
-    GameActionRequestSerializer
+    GameActionRequestSerializer, HandHistorySerializer
 )
 from .services.game_service import GameService
 from django.contrib.auth.models import User
@@ -435,3 +435,24 @@ def register_user(request):
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def game_hand_history(request, game_id):
+    """Get hand history for a specific game."""
+    game = get_object_or_404(Game, id=game_id)
+    
+    # Check if user is participating in the game
+    if not PlayerGame.objects.filter(game=game, player__user=request.user).exists():
+        return Response(
+            {'error': 'You are not a participant in this game'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    hand_histories = HandHistory.objects.filter(game=game).order_by('-hand_number')
+    serializer = HandHistorySerializer(hand_histories, many=True)
+    
+    return Response({
+        'game_id': game_id,
+        'hand_history': serializer.data
+    })

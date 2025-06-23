@@ -6,12 +6,12 @@ import { tableService } from '../services/apiService';
 const CreateTable = () => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
-    name: '',
-    max_players: 9,
-    small_blind: '',
-    big_blind: '',
-    min_buy_in: '',
-    max_buy_in: ''
+    name: 'Quick Table',
+    max_players: 6,
+    small_blind: '1',
+    big_blind: '2',
+    min_buy_in: '20',
+    max_buy_in: '200'
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

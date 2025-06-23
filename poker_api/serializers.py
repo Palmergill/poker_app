@@ -1,6 +1,6 @@
 # poker_api/serializers.py
 from rest_framework import serializers
-from .models import PokerTable, Player, Game, PlayerGame, GameAction
+from .models import PokerTable, Player, Game, PlayerGame, GameAction, HandHistory
 from django.contrib.auth.models import User
 
 class UserSerializer(serializers.ModelSerializer):
@@ -96,3 +96,26 @@ class GameSerializer(serializers.ModelSerializer):
 class GameActionRequestSerializer(serializers.Serializer):
     action_type = serializers.ChoiceField(choices=['FOLD', 'CHECK', 'CALL', 'BET', 'RAISE'])
     amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=0)
+
+class HandHistorySerializer(serializers.ModelSerializer):
+    winner_info = serializers.SerializerMethodField()
+    player_cards = serializers.SerializerMethodField()
+    actions = serializers.SerializerMethodField()
+    community_cards = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = HandHistory
+        fields = ['id', 'hand_number', 'pot_amount', 'final_phase', 'completed_at', 
+                 'winner_info', 'player_cards', 'actions', 'community_cards']
+    
+    def get_winner_info(self, obj):
+        return obj.get_winner_info()
+    
+    def get_player_cards(self, obj):
+        return obj.get_player_cards()
+    
+    def get_actions(self, obj):
+        return obj.get_actions()
+    
+    def get_community_cards(self, obj):
+        return obj.get_community_cards()

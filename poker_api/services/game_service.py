@@ -1,6 +1,6 @@
 # poker_api/services/game_service.py
 from django.db import transaction
-from ..models import Game, PlayerGame, GameAction, Player
+from ..models import Game, PlayerGame, GameAction, Player, HandHistory
 from ..utils.card_utils import Deck, Card
 from ..utils.hand_evaluator import HandEvaluator
 import random
@@ -8,6 +8,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import json
 from decimal import Decimal
+from django.utils import timezone
 
 class GameService:
     """
@@ -208,7 +209,9 @@ class GameService:
     @staticmethod
     def _handle_check(game, player_game):
         """Handle a check action."""
-        if player_game.current_bet < game.current_bet:
+        # Player can check if they've already matched the current bet
+        # This allows big blind to check pre-flop and players to check after calling
+        if player_game.current_bet != game.current_bet:
             raise ValueError("Cannot check when there is a bet to call")
     
     @staticmethod
@@ -353,19 +356,47 @@ class GameService:
             if pg.current_bet < current_bet and pg.stack > 0:
                 return False
         
-        # Second check: all players who can act must have had a chance to act this round
-        # Get all actions in the current phase
-        current_phase_actions = GameAction.objects.filter(
+        # Second check: determine if all players have had proper opportunity to act
+        # Get the most recent bet or raise action in current phase
+        recent_bet_actions = GameAction.objects.filter(
             player_game__game=game,
             player_game__is_active=True,
-            phase=game.phase
-        ).order_by('timestamp')
+            phase=game.phase,
+            action_type__in=['BET', 'RAISE']
+        ).order_by('-timestamp')
         
-        # Simplified logic: all active players must have acted in the current phase
-        for pg in active_players:
-            player_actions = current_phase_actions.filter(player_game=pg)
-            if not player_actions.exists():
-                return False
+        if recent_bet_actions.exists():
+            # If there was a bet/raise, all other active players must have acted after it
+            last_bet_raise = recent_bet_actions.first()
+            
+            for pg in active_players:
+                if pg == last_bet_raise.player_game:
+                    continue  # Skip the player who made the bet/raise
+                
+                # Check if this player has acted after the last bet/raise
+                player_actions_after_bet = GameAction.objects.filter(
+                    player_game=pg,
+                    phase=game.phase,
+                    timestamp__gt=last_bet_raise.timestamp
+                )
+                
+                # Player must act unless they're all-in
+                if not player_actions_after_bet.exists() and pg.stack > 0:
+                    return False
+        else:
+            # No bets/raises in this phase - all players must have had chance to act
+            all_actions = GameAction.objects.filter(
+                player_game__game=game,
+                player_game__is_active=True,
+                phase=game.phase
+            )
+            
+            # All active players with chips must have acted
+            for pg in active_players:
+                if pg.stack > 0:  # Only check players who can still act
+                    player_actions = all_actions.filter(player_game=pg)
+                    if not player_actions.exists():
+                        return False
         
         return True
     
@@ -459,10 +490,60 @@ class GameService:
         return deck
     
     @staticmethod
+    def _get_showdown_order(game, active_players):
+        """Determine the order players should show their cards at showdown.
+        
+        Rules from CLAUDE.md:
+        1. The last player to bet or raise shows their cards first
+        2. If there was no betting on the river, player closest to left of dealer shows first
+        """
+        # Find the last bet or raise action on the river
+        last_aggressive_action = GameAction.objects.filter(
+            player_game__game=game,
+            player_game__is_active=True,
+            phase='RIVER',
+            action_type__in=['BET', 'RAISE']
+        ).order_by('-timestamp').first()
+        
+        if last_aggressive_action:
+            # Last aggressive player shows first
+            first_to_show = last_aggressive_action.player_game
+        else:
+            # No betting on river - find player closest to left of dealer
+            dealer_pos = game.dealer_position
+            active_players_list = list(active_players.order_by('seat_position'))
+            
+            # Find first active player after dealer
+            first_to_show = None
+            for i in range(1, len(active_players_list) + 1):
+                next_pos = (dealer_pos + i) % len(active_players_list)
+                candidate = None
+                for pg in active_players_list:
+                    if pg.seat_position == next_pos:
+                        candidate = pg
+                        break
+                if candidate:
+                    first_to_show = candidate
+                    break
+            
+            if not first_to_show:
+                first_to_show = active_players.first()
+        
+        # Create ordered list starting with first_to_show
+        ordered_players = [first_to_show]
+        remaining_players = [pg for pg in active_players if pg != first_to_show]
+        ordered_players.extend(remaining_players)
+        
+        return ordered_players
+    
+    @staticmethod
     def _showdown(game):
         """Determine the winner(s) at showdown."""
         # Get active players
         active_players = PlayerGame.objects.filter(game=game, is_active=True)
+        
+        # Determine showdown order according to Texas Hold'em rules
+        showdown_order = GameService._get_showdown_order(game, active_players)
         
         # If only one active player, they win
         if active_players.count() == 1:
@@ -490,12 +571,12 @@ class GameService:
             return
         
         # Evaluate each player's hand
-        community_cards = [Card(card[0:-1], card[-1]) for card in game.get_community_cards()]
+        community_cards = [GameService._parse_card(card) for card in game.get_community_cards()]
         
         best_hands = {}
         for pg in active_players:
             # Convert string cards to Card objects
-            hole_cards = [Card(card[0:-1], card[-1]) for card in pg.get_cards()]
+            hole_cards = [GameService._parse_card(card) for card in pg.get_cards()]
             
             # Combine with community cards
             all_cards = hole_cards + community_cards
@@ -504,8 +585,8 @@ class GameService:
             hand_rank, hand_value, hand_name = HandEvaluator.evaluate_hand(all_cards)
             best_hands[pg.id] = (hand_rank, hand_value, hand_name, pg)
         
-        # Sort by hand strength (lower values are better)
-        sorted_hands = sorted(best_hands.values(), key=lambda x: (x[0], x[1]))
+        # Sort by hand strength (lower rank is better, higher value within rank is better)
+        sorted_hands = sorted(best_hands.values(), key=lambda x: (x[0], [-v for v in x[1]]))
         
         # Find winners (players with the same best hand)
         best_hand = sorted_hands[0]
@@ -529,6 +610,11 @@ class GameService:
             } for winner in winners],
             'pot_amount': float(game.pot),
             'community_cards': game.get_community_cards(),
+            'showdown_order': [{
+                'player_name': pg.player.user.username,
+                'player_id': pg.player.id,
+                'show_order': idx + 1
+            } for idx, pg in enumerate(showdown_order)],
             'all_hands': [{
                 'player_name': pg.player.user.username,
                 'hand_name': hand_name,
@@ -582,6 +668,83 @@ class GameService:
         GameService.broadcast_game_update(game.id)
 
     @staticmethod
+    def _parse_card(card_str):
+        """Parse a card string like 'AH', '10C', 'KS' into a Card object."""
+        if len(card_str) == 2:
+            # Single character rank like 'A', 'K', 'Q', 'J', '2'-'9'
+            rank = card_str[0]
+            suit = card_str[1]
+        elif len(card_str) == 3 and card_str.startswith('10'):
+            # Special case for '10'
+            rank = '10'
+            suit = card_str[2]
+        else:
+            raise ValueError(f"Invalid card format: {card_str}")
+        
+        return Card(rank, suit)
+
+    @staticmethod
+    def _save_hand_history(game):
+        """Save the completed hand to history before starting a new hand."""
+        if not game.winner_info:
+            return
+        
+        # Get current hand number
+        current_hand_number = game.hand_count + 1
+        
+        # Collect all player cards
+        player_cards = {}
+        for pg in PlayerGame.objects.filter(game=game):
+            if pg.cards:
+                player_cards[pg.player.user.username] = pg.get_cards()
+        
+        # Collect all actions for this hand (since last hand history save)
+        actions = []
+        last_hand_history = HandHistory.objects.filter(game=game).order_by('-hand_number').first()
+        if last_hand_history:
+            # Get actions since the last hand history was saved
+            actions_query = GameAction.objects.filter(
+                player_game__game=game,
+                timestamp__gt=last_hand_history.completed_at
+            ).order_by('timestamp')
+        else:
+            # This is the first hand, get all actions
+            actions_query = GameAction.objects.filter(
+                player_game__game=game
+            ).order_by('timestamp')
+        
+        for action in actions_query:
+            actions.append({
+                'player': action.player_game.player.user.username,
+                'action': action.action_type,
+                'amount': float(action.amount) if action.amount else 0,
+                'phase': action.phase,
+                'timestamp': action.timestamp.isoformat()
+            })
+        
+        # Create hand history record
+        hand_history = HandHistory.objects.create(
+            game=game,
+            hand_number=current_hand_number,
+            pot_amount=game.pot,
+            final_phase=game.phase,
+            completed_at=timezone.now()
+        )
+        
+        # Set JSON data
+        hand_history.set_winner_info(game.get_winner_info())
+        hand_history.set_player_cards(player_cards)
+        hand_history.set_actions(actions)
+        if game.community_cards:
+            hand_history.set_community_cards(game.get_community_cards())
+        
+        hand_history.save()
+        
+        # Increment hand count
+        game.hand_count = current_hand_number
+        game.save()
+
+    @staticmethod
     @transaction.atomic
     def _start_new_hand(game):
         """Start a new hand after the previous one ended."""
@@ -606,6 +769,9 @@ class GameService:
             else:
                 pg.is_active = False
                 pg.save()
+        
+        # Save hand history before starting new hand
+        GameService._save_hand_history(game)
         
         # Get active players (those with money)
         active_players = PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position')
