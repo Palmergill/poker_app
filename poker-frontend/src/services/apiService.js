@@ -106,6 +106,7 @@ const tableService = {
   getTable: (id) => apiClient.get(`/tables/${id}/`),
   createTable: (tableData) => apiClient.post(`/tables/`, tableData),
   deleteTable: (id) => apiClient.delete(`/tables/${id}/`),
+  deleteAllTables: () => apiClient.delete(`/tables/delete_all/`),
   joinTable: (id, buyIn) =>
     apiClient.post(`/tables/${id}/join_table/`, { buy_in: buyIn }),
 };
@@ -205,6 +206,9 @@ const gameService = {
   isWebSocketSupported: () => {
     return "WebSocket" in window;
   },
+
+  // Get hand history for a game
+  getHandHistory: (gameId) => apiClient.get(`/games/${gameId}/hand-history/`),
 };
 
 export { authService, playerService, tableService, gameService };

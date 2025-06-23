@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend Debug Test</title>
+</head>
+<body>
+    <h1>Hand History API Test</h1>
+    <button onclick="testAPI()">Test Hand History API</button>
+    <pre id="output"></pre>
+
+    <script>
+        async function testAPI() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing API...\n';
+            
+            try {
+                // Get token from localStorage (you may need to login first)
+                const token = localStorage.getItem('accessToken');
+                if (!token) {
+                    output.textContent += 'No access token found. Please login first.\n';
+                    return;
+                }
+                
+                const response = await fetch('http://localhost:8000/api/games/31/hand-history/', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                output.textContent += `Response status: ${response.status}\n`;
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    output.textContent += `Response data:\n${JSON.stringify(data, null, 2)}\n`;
+                    
+                    if (data.hand_history) {
+                        output.textContent += `\nFound ${data.hand_history.length} hands in history\n`;
+                        data.hand_history.forEach((hand, index) => {
+                            if (hand.winner_info && hand.winner_info.winners) {
+                                const winner = hand.winner_info.winners[0];
+                                output.textContent += `Hand ${index + 1}: Winner: ${winner.player_name}, Amount: $${winner.winning_amount}\n`;
+                            }
+                        });
+                    } else {
+                        output.textContent += '\nNo hand_history key found in response\n';
+                    }
+                } else {
+                    const errorText = await response.text();
+                    output.textContent += `Error response: ${errorText}\n`;
+                }
+            } catch (error) {
+                output.textContent += `Network error: ${error.message}\n`;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -357,12 +357,17 @@ class GameService:
                 return False
         
         # Second check: determine if all players have had proper opportunity to act
-        # Get the most recent bet or raise action in current phase
+        # Find when the current hand started (after the last hand history was saved)
+        last_hand_history = HandHistory.objects.filter(game=game).order_by('-completed_at').first()
+        current_hand_start = last_hand_history.completed_at if last_hand_history else game.created_at
+        
+        # Get the most recent bet or raise action in current phase (only from current hand)
         recent_bet_actions = GameAction.objects.filter(
             player_game__game=game,
             player_game__is_active=True,
             phase=game.phase,
-            action_type__in=['BET', 'RAISE']
+            action_type__in=['BET', 'RAISE'],
+            timestamp__gt=current_hand_start
         ).order_by('-timestamp')
         
         if recent_bet_actions.exists():
@@ -388,7 +393,8 @@ class GameService:
             all_actions = GameAction.objects.filter(
                 player_game__game=game,
                 player_game__is_active=True,
-                phase=game.phase
+                phase=game.phase,
+                timestamp__gt=current_hand_start
             )
             
             # All active players with chips must have acted
@@ -743,6 +749,53 @@ class GameService:
         # Increment hand count
         game.hand_count = current_hand_number
         game.save()
+        
+        # Console log the completed hand history
+        winner_info = hand_history.get_winner_info()
+        print("\n" + "="*60)
+        print(f"🃏 HAND #{current_hand_number} COMPLETED - Table: {game.table.name}")
+        print("="*60)
+        print(f"💰 Pot Amount: ${hand_history.pot_amount}")
+        print(f"🎯 Final Phase: {hand_history.final_phase}")
+        print(f"⏰ Completed: {hand_history.completed_at}")
+        
+        # Winner information
+        if winner_info and 'winners' in winner_info:
+            print(f"\n🏆 WINNER(S):")
+            for i, winner in enumerate(winner_info['winners'], 1):
+                print(f"   {i}. {winner['player_name']} - ${winner['winning_amount']}")
+                if 'hand_name' in winner:
+                    print(f"      Hand: {winner['hand_name']}")
+                if 'reason' in winner:
+                    print(f"      Reason: {winner['reason']}")
+        
+        # Community cards
+        community_cards = hand_history.get_community_cards()
+        if community_cards:
+            print(f"\n🎴 Community Cards: {', '.join(community_cards)}")
+        
+        # Player hole cards
+        player_cards = hand_history.get_player_cards()
+        if player_cards:
+            print(f"\n👥 Player Hole Cards:")
+            for player_name, cards in player_cards.items():
+                print(f"   {player_name}: {', '.join(cards)}")
+        
+        # Actions summary
+        actions = hand_history.get_actions()
+        if actions:
+            print(f"\n📋 Actions Summary ({len(actions)} total):")
+            current_phase = None
+            for action in actions:
+                if action['phase'] != current_phase:
+                    current_phase = action['phase']
+                    print(f"\n   {current_phase}:")
+                amount_str = f" ${action['amount']}" if action['amount'] > 0 else ""
+                print(f"     {action['player']}: {action['action']}{amount_str}")
+        
+        print("="*60)
+        print(f"🎮 Game continues... Next hand will be #{current_hand_number + 1}")
+        print("="*60 + "\n")
 
     @staticmethod
     @transaction.atomic
@@ -838,9 +891,22 @@ class GameService:
         Broadcast game update to all connected clients.
         For card visibility, we'll send all data and let the frontend handle visibility.
         """
+        import logging
         from ..serializers import GameSerializer
         
+        logger = logging.getLogger(__name__)
         game = Game.objects.get(id=game_id)
+        
+        # Log the broadcast details
+        player_count = game.playergame_set.filter(is_active=True).count()
+        logger.info(f"📡 Broadcasting update for game {game_id} - Status: {game.status}, Phase: {game.phase}, Players: {player_count}")
+        
+        # Check if this is a hand completion broadcast
+        if hasattr(game, 'winner_info') and game.winner_info:
+            winner_info = game.winner_info
+            if winner_info.get('winners'):
+                winner_name = winner_info['winners'][0].get('player_name', 'Unknown')
+                logger.info(f"🏆 Broadcasting hand completion - Winner: {winner_name}")
         
         # Create serializer without user context - cards will be handled on frontend
         serializer = GameSerializer(game)
@@ -853,6 +919,8 @@ class GameService:
                 'data': serializer.data
             }
         )
+        
+        logger.debug(f"✅ Broadcast completed for game {game_id}")
 
         # Call this method after game state changes, for example:
         # At the end of process_action

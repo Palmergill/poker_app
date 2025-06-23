@@ -27,7 +27,7 @@ SECRET_KEY = 'django-insecure-$a@e9#n@g!serqbwioa4(38&l6#v^@%mla1&pg@^()(+cvd@xp
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '*']
 
 
 
@@ -169,6 +169,8 @@ CHANNEL_LAYERS = {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
             "hosts": [('127.0.0.1', 6379)],
+            "capacity": 1500,
+            "expiry": 10,
         },
     },
 }
@@ -181,6 +183,25 @@ CORS_ALLOWED_ORIGINS = [
 
 # Allow WebSocket connections from the same origins
 CORS_ALLOW_ALL_ORIGINS = False  # Set to True only for development if needed
+
+# WebSocket specific settings
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+
+# Add WebSocket headers to CORS
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'sec-websocket-protocol',
+    'sec-websocket-extensions',
+    'sec-websocket-version',
+]
 
 # Logging configuration for debugging WebSocket issues
 LOGGING = {
@@ -195,11 +216,15 @@ LOGGING = {
             'format': '{levelname} {message}',
             'style': '{',
         },
+        'colored': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'simple',
+            'formatter': 'colored',
         },
         'file': {
             'class': 'logging.FileHandler',

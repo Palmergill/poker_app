@@ -10,7 +10,223 @@ import time
 import os
 import redis
 import signal
+import threading
+import queue
+import argparse
 from pathlib import Path
+
+# Try to import psutil, fall back to basic commands if not available
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("⚠️ psutil not installed. Some features will use fallback methods.")
+    print("   Install with: pip install psutil")
+
+def check_and_stop_existing_services():
+    """Check for and stop any existing Django/React processes."""
+    print("🔍 Checking for existing services...")
+    
+    if not PSUTIL_AVAILABLE:
+        return check_and_stop_with_pkill()
+    
+    services_stopped = False
+    
+    # Check for Django processes
+    django_pids = []
+    react_pids = []
+    
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
+                
+                # Check for Django runserver
+                if 'manage.py runserver' in cmdline or 'runserver' in cmdline:
+                    django_pids.append(proc.info['pid'])
+                    
+                # Check for React dev server (npm start in poker-frontend)
+                elif ('npm start' in cmdline or 'react-scripts start' in cmdline) and 'poker-frontend' in cmdline:
+                    react_pids.append(proc.info['pid'])
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+                
+    except Exception as e:
+        print(f"⚠️ Error checking processes: {e}")
+        # Fallback to pkill commands
+        return check_and_stop_with_pkill()
+    
+    # Stop Django processes
+    if django_pids:
+        print(f"🛑 Found running Django server(s) (PID: {', '.join(map(str, django_pids))})")
+        for pid in django_pids:
+            try:
+                proc = psutil.Process(pid)
+                proc.terminate()
+                proc.wait(timeout=5)
+                print(f"✅ Stopped Django server (PID: {pid})")
+                services_stopped = True
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                try:
+                    proc.kill()
+                    print(f"⚠️ Force killed Django server (PID: {pid})")
+                    services_stopped = True
+                except psutil.NoSuchProcess:
+                    pass
+            except Exception as e:
+                print(f"⚠️ Could not stop Django server (PID: {pid}): {e}")
+    
+    # Stop React processes
+    if react_pids:
+        print(f"🛑 Found running React server(s) (PID: {', '.join(map(str, react_pids))})")
+        for pid in react_pids:
+            try:
+                proc = psutil.Process(pid)
+                proc.terminate()
+                proc.wait(timeout=5)
+                print(f"✅ Stopped React server (PID: {pid})")
+                services_stopped = True
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                try:
+                    proc.kill()
+                    print(f"⚠️ Force killed React server (PID: {pid})")
+                    services_stopped = True
+                except psutil.NoSuchProcess:
+                    pass
+            except Exception as e:
+                print(f"⚠️ Could not stop React server (PID: {pid}): {e}")
+    
+    if not django_pids and not react_pids:
+        print("✅ No existing Django/React services found")
+    elif services_stopped:
+        print("⏱️ Waiting for services to fully stop...")
+        time.sleep(2)
+    
+    return True
+
+def check_and_stop_with_pkill():
+    """Fallback method using pkill commands."""
+    print("🔄 Using pkill fallback to stop services...")
+    
+    services_stopped = False
+    
+    # Stop Django processes
+    try:
+        result = subprocess.run(['pkill', '-f', 'manage.py runserver'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✅ Stopped Django server(s) using pkill")
+            services_stopped = True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    
+    # Stop React processes
+    try:
+        result = subprocess.run(['pkill', '-f', 'react-scripts start'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✅ Stopped React server(s) using pkill")
+            services_stopped = True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    
+    # Also try npm processes
+    try:
+        result = subprocess.run(['pkill', '-f', 'npm start'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✅ Stopped npm process(es) using pkill")
+            services_stopped = True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    
+    if services_stopped:
+        print("⏱️ Waiting for services to fully stop...")
+        time.sleep(2)
+    else:
+        print("✅ No services needed to be stopped")
+    
+    return True
+
+def check_port_availability(auto_cleanup=False):
+    """Check if required ports are available."""
+    print("🔍 Checking port availability...")
+    
+    ports_to_check = [8000, 3000]  # Django and React ports
+    occupied_ports = []
+    
+    for port in ports_to_check:
+        if PSUTIL_AVAILABLE:
+            try:
+                # Check if port is in use using psutil
+                for conn in psutil.net_connections():
+                    if conn.laddr.port == port and conn.status == psutil.CONN_LISTEN:
+                        occupied_ports.append(port)
+                        break
+            except Exception:
+                # Fallback to lsof if psutil fails
+                occupied_ports.extend(check_port_with_lsof(port))
+        else:
+            # Use lsof directly
+            occupied_ports.extend(check_port_with_lsof(port))
+    
+    if occupied_ports:
+        print(f"⚠️ Ports still occupied: {occupied_ports}")
+        if auto_cleanup:
+            print("   Auto-cleanup enabled, freeing ports...")
+            return force_free_ports(occupied_ports)
+        else:
+            response = input("   Do you want to try to free these ports? (y/N): ").strip().lower()
+            if response in ['y', 'yes']:
+                return force_free_ports(occupied_ports)
+            else:
+                print("   Continuing anyway - services may fail to start")
+                return True
+    else:
+        print("✅ All required ports are available")
+        return True
+
+def check_port_with_lsof(port):
+    """Check if a specific port is in use using lsof."""
+    try:
+        if os.name == 'posix':  # Unix-like systems
+            result = subprocess.run(['lsof', '-ti', f':{port}'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.stdout.strip():
+                return [port]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return []
+
+def force_free_ports(ports):
+    """Force free the specified ports."""
+    print(f"🔄 Attempting to free ports: {ports}")
+    
+    for port in ports:
+        try:
+            if os.name == 'posix':  # Unix-like systems
+                # Find processes using the port
+                result = subprocess.run(['lsof', '-ti', f':{port}'], 
+                                      capture_output=True, text=True, timeout=5)
+                pids = result.stdout.strip().split('\n') if result.stdout.strip() else []
+                
+                for pid in pids:
+                    if pid:
+                        try:
+                            subprocess.run(['kill', '-TERM', pid], timeout=5)
+                            print(f"✅ Sent TERM signal to process {pid} on port {port}")
+                            time.sleep(1)
+                            # Check if still running, then force kill
+                            subprocess.run(['kill', '-KILL', pid], timeout=5)
+                        except subprocess.CalledProcessError:
+                            pass  # Process may have already terminated
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            print(f"⚠️ Could not free port {port}")
+    
+    time.sleep(2)
+    return True
 
 def check_virtual_environment():
     """Check if we're running in a virtual environment."""
@@ -133,12 +349,14 @@ def start_django():
     """Start Django development server."""
     print("🚀 Starting Django server...")
     try:
-        # Start Django in the background with output capture
+        # Start Django in the background but allow stdout/stderr to pass through
         django_process = subprocess.Popen(
             [sys.executable, 'manage.py', 'runserver', '127.0.0.1:8000'],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
         )
         
         # Give Django a moment to start and check if it's still running
@@ -148,7 +366,7 @@ def start_django():
             return django_process
         else:
             stdout, stderr = django_process.communicate()
-            print(f"❌ Django failed to start: {stderr}")
+            print(f"❌ Django failed to start: {stdout}")
             return None
             
     except Exception as e:
@@ -194,8 +412,42 @@ def start_react():
     finally:
         os.chdir(original_dir)
 
+def monitor_django_output(django_process, output_queue):
+    """Monitor Django process output and put lines in queue."""
+    try:
+        while True:
+            line = django_process.stdout.readline()
+            if line:
+                output_queue.put(line.strip())
+            elif django_process.poll() is not None:
+                break
+    except Exception as e:
+        output_queue.put(f"Error reading Django output: {e}")
+
+def display_logs(output_queue):
+    """Display Django logs from queue."""
+    print("\n🔍 Following Django logs (press Ctrl+C to stop):")
+    print("=" * 60)
+    try:
+        while True:
+            try:
+                line = output_queue.get(timeout=1)
+                print(f"[DJANGO] {line}")
+            except queue.Empty:
+                continue
+    except KeyboardInterrupt:
+        pass
+
 def main():
     """Main startup function."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Poker App Startup Script')
+    parser.add_argument('--auto-cleanup', action='store_true', 
+                       help='Automatically clean up existing services without prompting')
+    parser.add_argument('--skip-cleanup', action='store_true',
+                       help='Skip cleanup of existing services')
+    args = parser.parse_args()
+    
     print("🎰 Poker App Startup Script")
     print("=" * 40)
     
@@ -203,6 +455,23 @@ def main():
     if not os.path.exists('manage.py'):
         print("❌ Please run this script from the Django project root directory")
         sys.exit(1)
+    
+    # Step 0: Stop any existing services
+    if not args.skip_cleanup:
+        try:
+            if not check_and_stop_existing_services():
+                print("❌ Failed to stop existing services")
+                sys.exit(1)
+            
+            if not check_port_availability(auto_cleanup=args.auto_cleanup):
+                print("❌ Required ports are not available")
+                sys.exit(1)
+                
+        except Exception as e:
+            print(f"⚠️ Error during service cleanup: {e}")
+            print("Continuing with startup...")
+    else:
+        print("⏭️ Skipping service cleanup as requested")
     
     # Check virtual environment
     if not check_virtual_environment():
@@ -249,6 +518,12 @@ def main():
     print("\n👤 Default admin credentials: admin/admin")
     print("\n⏹️  Press Ctrl+C to stop all services")
     
+    # Set up log monitoring
+    output_queue = queue.Queue()
+    log_thread = threading.Thread(target=monitor_django_output, args=(django_process, output_queue))
+    log_thread.daemon = True
+    log_thread.start()
+    
     def cleanup_processes():
         """Clean up all spawned processes."""
         print("\n🛑 Shutting down services...")
@@ -276,16 +551,8 @@ def main():
         print("✅ All services stopped")
     
     try:
-        # Wait for processes
-        while True:
-            time.sleep(1)
-            # Check if processes are still running
-            if django_process.poll() is not None:
-                print("❌ Django process stopped unexpectedly")
-                break
-            if react_process.poll() is not None:
-                print("❌ React process stopped unexpectedly")
-                break
+        # Start displaying logs
+        display_logs(output_queue)
     except KeyboardInterrupt:
         cleanup_processes()
     except Exception as e:

@@ -25,6 +25,27 @@ const PokerTable = () => {
       try {
         const response = await gameService.getGame(id);
         setGame(response.data);
+        
+        // Fetch hand history for this game
+        try {
+          const historyResponse = await gameService.getHandHistory(id);
+          
+          if (historyResponse.data && historyResponse.data.hand_history) {
+            // Transform backend format to frontend format
+            const formattedHistory = historyResponse.data.hand_history.map(hand => {
+              return {
+                timestamp: new Date(hand.completed_at).getTime(),
+                winners: hand.winner_info?.winners || [],
+                potAmount: hand.winner_info?.pot_amount || parseFloat(hand.pot_amount) || 0,
+                type: hand.winner_info?.type || 'Unknown'
+              };
+            });
+            setHandHistory(formattedHistory.slice(0, 5)); // Keep only last 5 hands
+          }
+        } catch (historyErr) {
+          // Don't show error to user, hand history is not critical
+        }
+        
         setLoading(false);
 
         // Connect to WebSocket after getting initial game state with small delay
@@ -32,7 +53,6 @@ const PokerTable = () => {
           connectWebSocket(response.data.id);
         }, 100); // Small delay to ensure state is set
       } catch (err) {
-        console.error("Failed to load game:", err);
         showMessage("Failed to load game", "error");
         setLoading(false);
       }
@@ -72,7 +92,6 @@ const PokerTable = () => {
   const connectWebSocket = (gameId) => {
     // Check if WebSocket is supported
     if (!gameService.isWebSocketSupported()) {
-      console.error("WebSocket is not supported in this browser");
       showMessage("Real-time updates not supported in this browser", "error");
       return;
     }
@@ -83,7 +102,6 @@ const PokerTable = () => {
       gameId,
       // onMessage
       (data) => {
-        console.log("Game update received:", data);
         
         // Preserve any existing card data that might have been loaded from API
         setGame(currentGame => {
@@ -105,7 +123,6 @@ const PokerTable = () => {
                    (Array.isArray(newPlayer.cards) && newPlayer.cards.length === 0) ||
                    (newPlayer.cards.cards && newPlayer.cards.cards.length === 0))) {
                 
-                console.log(`Preserving cards for player ${newPlayer.player.user.username}`);
                 return { ...newPlayer, cards: existingPlayer.cards };
               }
               
@@ -118,11 +135,12 @@ const PokerTable = () => {
               JSON.stringify(updatedGame.winner_info) !== JSON.stringify(currentGame.winner_info))) {
             // New hand completed, add to history
             const winnerInfo = updatedGame.winner_info;
+            
             const newHistoryEntry = {
               timestamp: Date.now(),
-              winners: winnerInfo.winners,
-              potAmount: winnerInfo.pot_amount,
-              type: winnerInfo.type
+              winners: winnerInfo.winners || [],
+              potAmount: winnerInfo.pot_amount || 0,
+              type: winnerInfo.type || 'Unknown'
             };
             
             setHandHistory(prevHistory => {
@@ -131,7 +149,6 @@ const PokerTable = () => {
             });
           }
           
-          console.log("Updated game state:", updatedGame);
           return updatedGame;
         });
         
@@ -141,7 +158,6 @@ const PokerTable = () => {
       },
       // onError
       (errorMessage) => {
-        console.error("WebSocket error:", errorMessage);
         setConnectionStatus("error");
         showMessage(`Connection error: ${errorMessage}`, "error");
 
@@ -151,7 +167,6 @@ const PokerTable = () => {
         }
 
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log("Attempting to reconnect WebSocket...");
           connectWebSocket(gameId);
         }, 3000);
       },
@@ -161,9 +176,6 @@ const PokerTable = () => {
 
         // Only try to reconnect if it wasn't a normal closure or authentication issue
         if (event.code !== 1000 && event.code !== 4001 && event.code !== 4003) {
-          console.log(
-            "WebSocket closed unexpectedly, attempting to reconnect..."
-          );
 
           if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
@@ -187,7 +199,6 @@ const PokerTable = () => {
       await gameService.startGame(id);
       // Game state will be updated via WebSocket
     } catch (err) {
-      console.error("Failed to start game:", err);
       showMessage(err.response?.data?.error || "Failed to start game", "error");
     }
   };
@@ -207,7 +218,6 @@ const PokerTable = () => {
       await gameService.leaveGame(id);
       navigate("/tables");
     } catch (err) {
-      console.error("Failed to leave game:", err);
       showMessage(err.response?.data?.error || "Failed to leave game", "error");
       
       // Even if the backend call fails, still navigate away after showing error
@@ -224,7 +234,6 @@ const PokerTable = () => {
       setGame(response.data.game);
       showMessage("✅ Game state refreshed successfully", "success");
     } catch (err) {
-      console.error("Failed to refresh game:", err);
       showMessage(
         `Failed to refresh game: ${err.response?.data?.error || err.message}`,
         "error"
@@ -242,7 +251,6 @@ const PokerTable = () => {
       setError(null); // Clear any previous errors
       setMessage(null); // Clear any popup messages
     } catch (err) {
-      console.error("Failed to take action:", err);
       showMessage(
         `${err.response?.data?.error || err.message}`,
         "error"
@@ -293,14 +301,11 @@ const PokerTable = () => {
       const userStr = localStorage.getItem("user");
       if (userStr) {
         const user = JSON.parse(userStr);
-        console.log("Current user info:", user);
         return user;
       }
 
-      console.warn("No user info found in localStorage");
       return null;
     } catch (e) {
-      console.error("Error getting user info:", e);
       return null;
     }
   };
@@ -453,13 +458,11 @@ const PokerTable = () => {
       if (currentUser) {
         if (currentUser.id && player.player.user.id === currentUser.id) {
           isCurrentUser = true;
-          console.log(`Player ${player.player.user.username} is current user (matched by ID)`);
         } else if (
           currentUser.username &&
           player.player.user.username === currentUser.username
         ) {
           isCurrentUser = true;
-          console.log(`Player ${player.player.user.username} is current user (matched by username)`);
         }
       }
       
@@ -474,8 +477,6 @@ const PokerTable = () => {
           playerCards = player.cards.cards;
         }
       }
-      
-      console.log(`Player ${player.player.user.username}: isCurrentUser=${isCurrentUser}, hasCards=${playerCards && playerCards.length > 0}, cards:`, playerCards);
 
       let style = {};
       
@@ -625,6 +626,7 @@ const PokerTable = () => {
   };
 
   const renderHandHistory = () => {
+    
     if (handHistory.length === 0) {
       return (
         <div className="hand-history-card">
@@ -640,27 +642,36 @@ const PokerTable = () => {
       <div className="hand-history-card">
         <h3>Recent Hands</h3>
         <div className="history-list">
-          {handHistory.map((hand, index) => (
-            <div key={hand.timestamp} className="history-entry">
-              <div className="entry-number">#{handHistory.length - index}</div>
-              <div className="entry-details">
-                {hand.winners.length === 1 ? (
-                  <div className="winner-info">
-                    <div className="winner-name">{hand.winners[0].player_name}</div>
-                    <div className="winner-amount">${hand.winners[0].winning_amount}</div>
-                  </div>
-                ) : (
-                  <div className="winner-info">
-                    <div className="winner-name">Split Pot</div>
-                    <div className="winner-amount">${hand.potAmount}</div>
-                  </div>
-                )}
-                {hand.winners[0].hand_name && (
-                  <div className="hand-type">{hand.winners[0].hand_name}</div>
-                )}
+          {handHistory.map((hand, index) => {
+            return (
+              <div key={hand.timestamp} className="history-entry">
+                <div className="entry-number">#{handHistory.length - index}</div>
+                <div className="entry-details">
+                  {hand.winners && hand.winners.length > 0 ? (
+                    hand.winners.length === 1 ? (
+                      <div className="winner-info">
+                        <div className="winner-name">{hand.winners[0].player_name || 'Unknown Player'}</div>
+                        <div className="winner-amount">${hand.winners[0].winning_amount || hand.potAmount}</div>
+                      </div>
+                    ) : (
+                      <div className="winner-info">
+                        <div className="winner-name">Split Pot ({hand.winners.length} winners)</div>
+                        <div className="winner-amount">${hand.potAmount}</div>
+                      </div>
+                    )
+                  ) : (
+                    <div className="winner-info">
+                      <div className="winner-name">No Winner Info</div>
+                      <div className="winner-amount">${hand.potAmount}</div>
+                    </div>
+                  )}
+                  {hand.winners && hand.winners[0] && hand.winners[0].hand_name && (
+                    <div className="hand-type">{hand.winners[0].hand_name}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );

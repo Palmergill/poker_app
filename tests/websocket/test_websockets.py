@@ -9,9 +9,9 @@ from channels.db import database_sync_to_async
 from decimal import Decimal
 import json
 
-from .models import PokerTable, Player, Game, PlayerGame
-from .services.game_service import GameService
-from .consumers import PokerGameConsumer
+from poker_api.models import PokerTable, Player, Game, PlayerGame
+from poker_api.services.game_service import GameService
+from poker_api.consumers import PokerGameConsumer
 
 
 class WebSocketTestCase(TransactionTestCase):

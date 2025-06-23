@@ -182,8 +182,16 @@ python manage.py migrate
 # Create superuser
 python manage.py createsuperuser
 
-# Run tests (if available)
-python manage.py test
+# Run tests
+python run_tests.py
+
+# Run specific test category
+python run_tests.py --category unit
+python run_tests.py --category integration
+python run_tests.py --category api
+
+# Run with Django test runner
+python manage.py test tests
 ```
 
 ### Frontend (React)
@@ -210,15 +218,41 @@ npm test
 ```bash
 # Use the provided startup script (recommended)
 python start_poker_app.py
+
+# With automatic cleanup of existing services
+python start_poker_app.py --auto-cleanup
+
+# Skip cleanup if you know no services are running
+python start_poker_app.py --skip-cleanup
 ```
 
 This script handles:
 
+- **Service Cleanup**: Automatically detects and stops existing Django/React processes
+- **Port Management**: Checks and frees occupied ports (8000, 3000)
 - Redis server startup/verification
 - Python dependencies installation
 - Django migrations
 - Superuser creation (admin/admin)
 - Concurrent startup of both Django and React servers
+
+### Full Application Shutdown
+
+```bash
+# Stop all poker app services
+python stop_poker_app.py
+
+# Force kill any stubborn processes
+python stop_poker_app.py --force
+```
+
+The shutdown script:
+
+- Stops all Django runserver processes
+- Stops all React development servers
+- Stops the startup script itself
+- Checks and optionally frees occupied ports
+- Works with or without psutil for process management
 
 ### Prerequisites
 

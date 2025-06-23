@@ -92,6 +92,27 @@ class PokerTableViewSet(viewsets.ModelViewSet):
             {'error': 'No available seats'},
             status=status.HTTP_400_BAD_REQUEST
         )
+    
+    @action(detail=False, methods=['delete'])
+    def delete_all(self, request):
+        """Delete all poker tables (admin only)"""
+        # Check if user is admin
+        if not (request.user.is_superuser or request.user.is_staff):
+            return Response(
+                {'error': 'Admin privileges required'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get count before deletion
+        table_count = PokerTable.objects.count()
+        
+        # Delete all tables (this will cascade delete related games and player games)
+        PokerTable.objects.all().delete()
+        
+        return Response({
+            'message': f'Successfully deleted {table_count} tables',
+            'deleted_count': table_count
+        })
 
 class GameViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Game.objects.all()
@@ -130,22 +151,30 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
         # Validate action
         serializer = GameActionRequestSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.warning(f"❌ Invalid action data from {request.user.username}: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         action_type = serializer.validated_data['action_type']
         amount = serializer.validated_data.get('amount', 0)
         
+        # Log the action attempt
+        amount_str = f" ${amount}" if amount > 0 else ""
+        logger.info(f"🎮 Game {game.id}: {request.user.username} attempting {action_type}{amount_str}")
+        
         try:
             # Process the action
             updated_game = GameService.process_action(game.id, player.id, action_type, amount)
+            logger.info(f"✅ Action processed successfully - Game status: {updated_game.status}, Phase: {updated_game.phase}")
             
             # Broadcast the update to all connected clients
             GameService.broadcast_game_update(game.id)
+            logger.debug(f"📡 Game update broadcast for game {game.id}")
             
             # Return updated game state
             game_serializer = self.get_serializer(updated_game)
             return Response(game_serializer.data)
         except ValueError as e:
+            logger.error(f"❌ Action failed for {request.user.username}: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
@@ -440,18 +469,32 @@ def register_user(request):
 @permission_classes([IsAuthenticated])
 def game_hand_history(request, game_id):
     """Get hand history for a specific game."""
+    logger.info(f"📡 Hand history requested for game {game_id} by user {request.user.username}")
+    
     game = get_object_or_404(Game, id=game_id)
     
     # Check if user is participating in the game
     if not PlayerGame.objects.filter(game=game, player__user=request.user).exists():
+        logger.warning(f"❌ User {request.user.username} not authorized for game {game_id}")
         return Response(
             {'error': 'You are not a participant in this game'},
             status=status.HTTP_403_FORBIDDEN
         )
     
     hand_histories = HandHistory.objects.filter(game=game).order_by('-hand_number')
+    logger.info(f"📊 Found {hand_histories.count()} hand histories for game {game_id}")
+    
     serializer = HandHistorySerializer(hand_histories, many=True)
     
+    # Log details about each hand
+    for hand in hand_histories[:3]:  # Log first 3 hands
+        winner_info = hand.get_winner_info()
+        if winner_info and 'winners' in winner_info:
+            winner_name = winner_info['winners'][0]['player_name']
+            winning_amount = winner_info['winners'][0]['winning_amount']
+            logger.info(f"   Hand #{hand.hand_number}: Winner: {winner_name}, Amount: ${winning_amount}")
+    
+    logger.info(f"✅ Returning hand history response for game {game_id}")
     return Response({
         'game_id': game_id,
         'hand_history': serializer.data

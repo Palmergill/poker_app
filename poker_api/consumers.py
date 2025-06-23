@@ -10,42 +10,47 @@ logger = logging.getLogger(__name__)
 
 class PokerGameConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.game_id = self.scope['url_route']['kwargs']['game_id']
-        self.game_group_name = f'game_{self.game_id}'
-        
-        # Get user from scope (set by our custom middleware)
-        user = self.scope.get('user')
-        
-        logger.info(f"WebSocket connection attempt for game {self.game_id}, user: {user}")
-        
-        # Check if user is authenticated
-        if isinstance(user, AnonymousUser) or not user.is_authenticated:
-            logger.warning(f"Unauthenticated WebSocket connection attempt for game {self.game_id}")
-            await self.close(code=4001)  # Custom close code for authentication failure
-            return
-        
-        # Check if user can join this game
-        can_join = await self.can_join_game(user)
-        if not can_join:
-            logger.warning(f"User {user.username} cannot join game {self.game_id}")
-            await self.close(code=4003)  # Custom close code for permission denied
-            return
-        
-        # Join game group
-        await self.channel_layer.group_add(
-            self.game_group_name,
-            self.channel_name
-        )
-        
-        await self.accept()
-        logger.info(f"WebSocket connected for user {user.username} to game {self.game_id}")
-        
-        # Send current game state to the new consumer
         try:
-            game_state = await self.get_game_state()
-            await self.send(text_data=json.dumps(game_state))
+            self.game_id = self.scope['url_route']['kwargs']['game_id']
+            self.game_group_name = f'game_{self.game_id}'
+            
+            # Get user from scope (set by our custom middleware)
+            user = self.scope.get('user')
+            
+            logger.info(f"WebSocket connection attempt for game {self.game_id}, user: {user}")
+            
+            # Check if user is authenticated
+            if isinstance(user, AnonymousUser) or not user.is_authenticated:
+                logger.warning(f"Unauthenticated WebSocket connection attempt for game {self.game_id}")
+                await self.close(code=4001)  # Custom close code for authentication failure
+                return
+            
+            # Check if user can join this game
+            can_join = await self.can_join_game(user)
+            if not can_join:
+                logger.warning(f"User {user.username} cannot join game {self.game_id}")
+                await self.close(code=4003)  # Custom close code for permission denied
+                return
+            
+            # Join game group
+            await self.channel_layer.group_add(
+                self.game_group_name,
+                self.channel_name
+            )
+            
+            await self.accept()
+            logger.info(f"WebSocket connected for user {user.username} to game {self.game_id}")
+            
+            # Send current game state to the new consumer
+            try:
+                game_state = await self.get_game_state()
+                await self.send(text_data=json.dumps(game_state))
+            except Exception as e:
+                logger.error(f"Error sending initial game state: {e}")
+                
         except Exception as e:
-            logger.error(f"Error sending initial game state: {e}")
+            logger.error(f"Error in WebSocket connect: {e}")
+            await self.close(code=1011)  # Internal server error
     
     async def disconnect(self, close_code):
         # Leave game group
@@ -68,11 +73,24 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
     
     # Receive message from game group
     async def game_update(self, event):
+        # Log game update details
+        game_data = event.get('data', {})
+        user = self.scope.get('user')
+        
+        # Check if this is a hand completion update
+        if game_data.get('winner_info'):
+            winner_info = game_data['winner_info']
+            if winner_info.get('winners'):
+                winner_name = winner_info['winners'][0].get('player_name', 'Unknown')
+                logger.info(f"🏆 WebSocket: Sending hand completion to {user.username} - Winner: {winner_name}")
+        
+        logger.debug(f"📡 WebSocket: Sending game update to {user.username} for game {self.game_id}")
+        
         # Send message to WebSocket
         try:
             await self.send(text_data=json.dumps(event['data']))
         except Exception as e:
-            logger.error(f"Error sending game update: {e}")
+            logger.error(f"❌ Error sending game update to {user.username}: {e}")
     
     @database_sync_to_async
     def can_join_game(self, user):

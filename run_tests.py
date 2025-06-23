@@ -50,7 +50,7 @@ def run_all_tests(verbosity=1, coverage=False):
     else:
         TestRunner = get_runner(settings)
         test_runner = TestRunner(verbosity=verbosity)
-        failures = test_runner.run_tests(['poker_api'])
+        failures = test_runner.run_tests(['tests'])
         
         if failures == 0:
             print("✅ All tests passed!")
@@ -63,13 +63,12 @@ def run_all_tests(verbosity=1, coverage=False):
 def run_category_tests(category, verbosity=1):
     """Run tests for a specific category."""
     test_map = {
-        'models': 'poker_api.tests.ModelTestCase',
-        'cards': 'poker_api.tests.CardUtilsTestCase',
-        'hands': 'poker_api.tests.HandEvaluatorTestCase',
-        'game': 'poker_api.tests.GameServiceTestCase',
-        'api': 'poker_api.tests.APITestCase',
-        'integration': 'poker_api.tests.IntegrationTestCase',
-        'websockets': 'poker_api.test_websockets.WebSocketTestCase',
+        'models': 'tests.unit.test_models',
+        'unit': 'tests.unit',
+        'integration': 'tests.integration',
+        'api': 'tests.api',
+        'websockets': 'tests.websocket',
+        'frontend': 'tests.frontend',
     }
     
     if category not in test_map:
@@ -138,7 +137,7 @@ def main():
     parser = argparse.ArgumentParser(description='Run poker application tests')
     parser.add_argument(
         '--category', 
-        choices=['models', 'cards', 'hands', 'game', 'api', 'integration', 'websockets'],
+        choices=['models', 'unit', 'integration', 'api', 'websockets', 'frontend'],
         help='Run tests for specific category only'
     )
     parser.add_argument(

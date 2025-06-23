@@ -71,11 +71,12 @@ class GameSerializer(serializers.ModelSerializer):
     players = serializers.SerializerMethodField()
     community_cards = serializers.SerializerMethodField()
     actions = serializers.SerializerMethodField()
+    winner_info = serializers.SerializerMethodField()
     
     class Meta:
         model = Game
         fields = ['id', 'table', 'status', 'phase', 'pot', 'current_bet', 'dealer_position', 
-                  'current_player', 'community_cards', 'players', 'actions', 'created_at']
+                  'current_player', 'community_cards', 'players', 'actions', 'created_at', 'winner_info']
     
     def get_community_cards(self, obj):
         return obj.get_community_cards()
@@ -92,6 +93,9 @@ class GameSerializer(serializers.ModelSerializer):
         ).order_by('-timestamp')[:10]
         serializer = GameActionSerializer(actions, many=True)
         return serializer.data
+    
+    def get_winner_info(self, obj):
+        return obj.get_winner_info()
 
 class GameActionRequestSerializer(serializers.Serializer):
     action_type = serializers.ChoiceField(choices=['FOLD', 'CHECK', 'CALL', 'BET', 'RAISE'])

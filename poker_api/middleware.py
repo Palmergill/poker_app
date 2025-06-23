@@ -24,6 +24,10 @@ class JWTAuthMiddleware(BaseMiddleware):
     """
     
     async def __call__(self, scope, receive, send):
+        # Only process WebSocket connections
+        if scope['type'] != 'websocket':
+            return await super().__call__(scope, receive, send)
+            
         # Get the token from query string
         query_string = scope.get('query_string', b'').decode()
         query_params = parse_qs(query_string)
@@ -41,6 +45,9 @@ class JWTAuthMiddleware(BaseMiddleware):
                 logger.info(f"WebSocket authenticated user: {user.username if user.is_authenticated else 'Anonymous'}")
             except (InvalidToken, TokenError, KeyError) as e:
                 logger.warning(f"WebSocket JWT validation failed: {e}")
+                scope['user'] = AnonymousUser()
+            except Exception as e:
+                logger.error(f"Unexpected error in WebSocket auth: {e}")
                 scope['user'] = AnonymousUser()
         else:
             logger.warning("WebSocket connection attempt without token")

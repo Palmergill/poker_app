@@ -6,6 +6,7 @@ Quick test runner using SQLite instead of PostgreSQL.
 import os
 import sys
 import django
+from pathlib import Path
 from django.conf import settings
 from django.test.utils import get_runner
 
