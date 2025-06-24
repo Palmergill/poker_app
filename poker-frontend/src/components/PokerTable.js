@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { gameService } from "../services/apiService";
 import "./PokerTable.css";
 
+// Main poker table component for displaying and interacting with poker games
 const PokerTable = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -13,6 +14,8 @@ const PokerTable = () => {
   const [message, setMessage] = useState(null); // For temporary popup messages
   const [messageType, setMessageType] = useState("error"); // "error", "success", "info"
   const [handHistory, setHandHistory] = useState([]); // Store last 5 hand results
+  const [showHandResults, setShowHandResults] = useState(false); // Show hand results popup
+  const [currentHandResult, setCurrentHandResult] = useState(null); // Current hand result data
   const [actionType, setActionType] = useState("CHECK");
   const [betAmount, setBetAmount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
@@ -21,6 +24,7 @@ const PokerTable = () => {
   const messageTimeoutRef = useRef(null);
 
   useEffect(() => {
+    // Fetch initial game data and hand history
     const fetchGame = async () => {
       try {
         const response = await gameService.getGame(id);
@@ -33,11 +37,15 @@ const PokerTable = () => {
           if (historyResponse.data && historyResponse.data.hand_history) {
             // Transform backend format to frontend format
             const formattedHistory = historyResponse.data.hand_history.map(hand => {
+              const winnerInfo = hand.winner_info;
+              const potAmount = winnerInfo?.pot_amount || parseFloat(hand.pot_amount) || 0;
+              
               return {
                 timestamp: new Date(hand.completed_at).getTime(),
-                winners: hand.winner_info?.winners || [],
-                potAmount: hand.winner_info?.pot_amount || parseFloat(hand.pot_amount) || 0,
-                type: hand.winner_info?.type || 'Unknown'
+                winners: winnerInfo?.winners || [],
+                potAmount: potAmount,
+                type: winnerInfo?.type || 'Unknown',
+                handNumber: hand.hand_number
               };
             });
             setHandHistory(formattedHistory.slice(0, 5)); // Keep only last 5 hands
@@ -74,6 +82,80 @@ const PokerTable = () => {
     };
   }, [id]);
 
+  // Poll for game updates every 3 seconds as backup to WebSocket
+  useEffect(() => {
+    if (!game) return; // Don't poll until we have initial game data
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        // Fetch updated game data
+        const response = await gameService.getGame(id);
+        const updatedGame = response.data;
+        setGame(updatedGame);
+        
+        // Check if we need to restore hand results popup after browser refresh
+        // This happens when game phase is WAITING_FOR_PLAYERS but we don't have a popup showing
+        if (updatedGame.phase === 'WAITING_FOR_PLAYERS' && 
+            updatedGame.winner_info && 
+            !showHandResults) {
+          
+          console.log('🔄 Restoring hand results popup after browser refresh');
+          
+          // Handle winner_info which comes from API as already parsed object
+          let winnerInfo;
+          if (typeof updatedGame.winner_info === 'string') {
+            try {
+              winnerInfo = JSON.parse(updatedGame.winner_info);
+            } catch (e) {
+              console.warn('Failed to parse winner_info as JSON:', e);
+              winnerInfo = {};
+            }
+          } else {
+            // Already an object
+            winnerInfo = updatedGame.winner_info || {};
+          }
+          
+          const restoredHandResult = {
+            timestamp: Date.now(),
+            winners: winnerInfo.winners || [],
+            potAmount: winnerInfo.pot_amount || 0,
+            type: winnerInfo.type || 'Unknown',
+            handNumber: updatedGame.hand_count || 1,
+            allPlayers: updatedGame.players || []
+          };
+          
+          setCurrentHandResult(restoredHandResult);
+          setShowHandResults(true);
+          console.log('✅ Hand results popup restored');
+        }
+        
+        // Fetch updated hand history
+        const historyResponse = await gameService.getHandHistory(id);
+        if (historyResponse.data && historyResponse.data.hand_history) {
+          const formattedHistory = historyResponse.data.hand_history.map(hand => {
+            const winnerInfo = hand.winner_info;
+            const potAmount = winnerInfo?.pot_amount || parseFloat(hand.pot_amount) || 0;
+            
+            return {
+              timestamp: new Date(hand.completed_at).getTime(),
+              winners: winnerInfo?.winners || [],
+              potAmount: potAmount,
+              type: winnerInfo?.type || 'Unknown',
+              handNumber: hand.hand_number
+            };
+          });
+          setHandHistory(formattedHistory.slice(0, 5));
+        }
+      } catch (err) {
+        // Silently fail polling errors to avoid spam
+        console.warn('Polling update failed:', err);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [id, game, showHandResults]);
+
+  // Display temporary popup messages to user
   const showMessage = (text, type = "error", duration = 3000) => {
     // Clear any existing timeout
     if (messageTimeoutRef.current) {
@@ -89,6 +171,7 @@ const PokerTable = () => {
     }, duration);
   };
 
+  // Connect to WebSocket for real-time game updates
   const connectWebSocket = (gameId) => {
     // Check if WebSocket is supported
     if (!gameService.isWebSocketSupported()) {
@@ -131,22 +214,60 @@ const PokerTable = () => {
           }
           
           // Check for hand completion and update history
-          if (updatedGame.winner_info && (!currentGame.winner_info || 
-              JSON.stringify(updatedGame.winner_info) !== JSON.stringify(currentGame.winner_info))) {
-            // New hand completed, add to history
+          // Check if winner_info is present (hand just completed) or if hand_count increased (new hand started)
+          const handJustCompleted = updatedGame.winner_info && (!currentGame.winner_info || 
+              JSON.stringify(updatedGame.winner_info) !== JSON.stringify(currentGame.winner_info));
+          
+          const newHandStarted = updatedGame.hand_count > (currentGame.hand_count || 0);
+          
+          // If new hand started but we have winner_info from previous hand, show popup
+          if ((handJustCompleted || newHandStarted) && updatedGame.winner_info) {
+            console.log('🎯 Hand completion detected:', {
+              handJustCompleted,
+              newHandStarted,
+              winnerInfo: updatedGame.winner_info,
+              handCount: updatedGame.hand_count,
+              currentShowingPopup: showHandResults
+            });
+            
             const winnerInfo = updatedGame.winner_info;
             
             const newHistoryEntry = {
               timestamp: Date.now(),
               winners: winnerInfo.winners || [],
               potAmount: winnerInfo.pot_amount || 0,
-              type: winnerInfo.type || 'Unknown'
+              type: winnerInfo.type || 'Unknown',
+              handNumber: updatedGame.hand_count || currentGame.hand_count || 0,
+              allPlayers: updatedGame.players || [] // Store all players for money change tracking
             };
             
-            setHandHistory(prevHistory => {
-              const newHistory = [newHistoryEntry, ...prevHistory];
-              return newHistory.slice(0, 5); // Keep only last 5 hands
-            });
+            // Only show popup if we don't already have one showing for this hand
+            if (!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) {
+              console.log('✅ Showing hand results popup for hand #', newHistoryEntry.handNumber);
+              setCurrentHandResult(newHistoryEntry);
+              setShowHandResults(true);
+              
+              // Fetch fresh hand history from database after hand completion
+              gameService.getHandHistory(gameId)
+                .then(freshHistory => {
+                  console.log('📜 Fetched fresh hand history:', freshHistory);
+                  setHandHistory(freshHistory.slice(0, 5)); // Keep only last 5 hands
+                })
+                .catch(error => {
+                  console.error('❌ Failed to fetch fresh hand history:', error);
+                  // Fallback to WebSocket-based history update
+                  setHandHistory(prevHistory => {
+                    const existingIndex = prevHistory.findIndex(h => h.handNumber === newHistoryEntry.handNumber);
+                    if (existingIndex === -1) {
+                      const newHistory = [newHistoryEntry, ...prevHistory];
+                      return newHistory.slice(0, 5);
+                    }
+                    return prevHistory;
+                  });
+                });
+            } else {
+              console.log('⏭️ Skipping popup - already showing for this hand');
+            }
           }
           
           return updatedGame;
@@ -194,6 +315,7 @@ const PokerTable = () => {
     }
   };
 
+  // Start the poker game
   const handleStartGame = async () => {
     try {
       await gameService.startGame(id);
@@ -203,6 +325,7 @@ const PokerTable = () => {
     }
   };
 
+  // Leave the poker game with confirmation dialog
   const handleLeaveGame = async () => {
     // Show confirmation dialog if game is in progress
     if (game.status === "PLAYING") {
@@ -228,6 +351,7 @@ const PokerTable = () => {
     }
   };
 
+  // Refresh game state from server
   const handleRefreshGame = async () => {
     try {
       const response = await gameService.resetGameState(id);
@@ -241,6 +365,7 @@ const PokerTable = () => {
     }
   };
 
+  // Handle player poker actions (fold, call, bet, raise, check)
   const handleAction = async (actionTypeParam = null, amountParam = null) => {
     try {
       const actionToUse = actionTypeParam || actionType;
@@ -258,6 +383,44 @@ const PokerTable = () => {
     }
   };
 
+  // Handle player ready for next hand
+  const handlePlayerReady = async () => {
+    try {
+      await gameService.setPlayerReady(id);
+      setShowHandResults(false);
+      setCurrentHandResult(null);
+      showMessage("✅ You're ready for the next hand!", "success", 2000);
+    } catch (err) {
+      showMessage(`Failed to set ready status: ${err.response?.data?.error || err.message}`, "error");
+    }
+  };
+
+  // Handle cash out from game
+  const handleCashOut = async () => {
+    const confirmed = window.confirm(
+      "Are you sure you want to cash out and leave the game? Your remaining chips will be deposited to your account."
+    );
+    
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await gameService.cashOut(id);
+      setShowHandResults(false);
+      setCurrentHandResult(null);
+      showMessage("💰 Cashed out successfully! Redirecting...", "success", 2000);
+      
+      // Redirect to tables after a short delay
+      setTimeout(() => {
+        navigate("/tables");
+      }, 2000);
+    } catch (err) {
+      showMessage(`Failed to cash out: ${err.response?.data?.error || err.message}`, "error");
+    }
+  };
+
+  // Render WebSocket connection status indicator
   const renderConnectionStatus = () => {
     const statusColors = {
       connected: "#4caf50",
@@ -296,6 +459,7 @@ const PokerTable = () => {
     return <div className="error">Game not found</div>;
   }
 
+  // Get current user information from localStorage
   const getCurrentUserInfo = () => {
     try {
       const userStr = localStorage.getItem("user");
@@ -310,6 +474,7 @@ const PokerTable = () => {
     }
   };
 
+  // Find the current player in the game
   const findCurrentPlayer = () => {
     if (!game.players) return null;
 
@@ -333,6 +498,7 @@ const PokerTable = () => {
     return null;
   };
 
+  // Check if it's the current player's turn
   const isPlayerTurn = () => {
     const currentPlayer = findCurrentPlayer();
     return (
@@ -342,6 +508,7 @@ const PokerTable = () => {
     );
   };
 
+  // Render game action buttons (fold, call, bet, raise, check)
   const renderActionButtons = () => {
     if (game.status !== "PLAYING" || !isPlayerTurn()) {
       return null;
@@ -441,6 +608,7 @@ const PokerTable = () => {
     );
   };
 
+  // Render all players around the poker table
   const renderPlayers = () => {
     if (!game.players || game.players.length === 0) {
       return <div className="no-players">No players at the table</div>;
@@ -586,6 +754,7 @@ const PokerTable = () => {
     });
   };
 
+  // Render temporary popup messages to user
   const renderPopupMessage = () => {
     if (!message) return null;
 
@@ -625,6 +794,7 @@ const PokerTable = () => {
     );
   };
 
+  // Render recent hand history
   const renderHandHistory = () => {
     
     if (handHistory.length === 0) {
@@ -645,28 +815,35 @@ const PokerTable = () => {
           {handHistory.map((hand, index) => {
             return (
               <div key={hand.timestamp} className="history-entry">
-                <div className="entry-number">#{handHistory.length - index}</div>
+                <div className="entry-number">#{hand.handNumber || (handHistory.length - index)}</div>
                 <div className="entry-details">
                   {hand.winners && hand.winners.length > 0 ? (
                     hand.winners.length === 1 ? (
                       <div className="winner-info">
                         <div className="winner-name">{hand.winners[0].player_name || 'Unknown Player'}</div>
-                        <div className="winner-amount">${hand.winners[0].winning_amount || hand.potAmount}</div>
+                        <div className="winner-amount">
+                          ${(hand.winners[0].winning_amount !== undefined && hand.winners[0].winning_amount !== null) 
+                            ? Number(hand.winners[0].winning_amount).toFixed(2) 
+                            : Number(hand.potAmount).toFixed(2)}
+                        </div>
                       </div>
                     ) : (
                       <div className="winner-info">
                         <div className="winner-name">Split Pot ({hand.winners.length} winners)</div>
-                        <div className="winner-amount">${hand.potAmount}</div>
+                        <div className="winner-amount">${Number(hand.potAmount).toFixed(2)}</div>
                       </div>
                     )
                   ) : (
                     <div className="winner-info">
                       <div className="winner-name">No Winner Info</div>
-                      <div className="winner-amount">${hand.potAmount}</div>
+                      <div className="winner-amount">${Number(hand.potAmount).toFixed(2)}</div>
                     </div>
                   )}
                   {hand.winners && hand.winners[0] && hand.winners[0].hand_name && (
                     <div className="hand-type">{hand.winners[0].hand_name}</div>
+                  )}
+                  {hand.winners && hand.winners[0] && hand.winners[0].reason && (
+                    <div className="hand-reason">{hand.winners[0].reason}</div>
                   )}
                 </div>
               </div>
@@ -677,6 +854,7 @@ const PokerTable = () => {
     );
   };
 
+  // Render game information and controls
   const renderGameInfo = () => (
     <div className="game-info-card">
       <h3>{game.table.name}</h3>
@@ -704,6 +882,7 @@ const PokerTable = () => {
     </div>
   );
 
+  // Render community cards on the table
   const renderCommunityCards = () => {
     if (!game.community_cards || game.community_cards.length === 0) {
       return null;
@@ -737,6 +916,7 @@ const PokerTable = () => {
     );
   };
 
+  // Render recent game actions/logs
   const renderGameLogs = () => {
     if (!game.actions || game.actions.length === 0) {
       return null;
@@ -759,6 +939,122 @@ const PokerTable = () => {
     );
   };
 
+  // Render hand results popup
+  const renderHandResultsPopup = () => {
+    if (!showHandResults || !currentHandResult) {
+      return null;
+    }
+
+    return (
+      <div className="hand-results-overlay">
+        <div className="hand-results-popup">
+          <div className="hand-results-header">
+            <h2>🎯 Hand #{currentHandResult.handNumber} Results</h2>
+          </div>
+          
+          <div className="hand-results-content">
+            <div className="pot-info">
+              <div className="pot-amount">💰 Pot: ${Number(currentHandResult.potAmount).toFixed(2)}</div>
+            </div>
+
+            <div className="winners-section">
+              <h3>🏆 Winner{currentHandResult.winners.length > 1 ? 's' : ''}</h3>
+              {currentHandResult.winners.map((winner, index) => (
+                <div key={index} className="winner-card">
+                  <div className="winner-name">{winner.player_name}</div>
+                  <div className="winner-amount">+${Number(winner.winning_amount).toFixed(2)}</div>
+                  {winner.hand_name && (
+                    <div className="winner-hand">{winner.hand_name}</div>
+                  )}
+                  {winner.reason && (
+                    <div className="winner-reason">{winner.reason}</div>
+                  )}
+                  {winner.hole_cards && winner.hole_cards.length > 0 && (
+                    <div className="winner-cards">
+                      {winner.hole_cards.map((card, cardIndex) => {
+                        const rank = card.slice(0, -1);
+                        const suit = card.slice(-1);
+                        const suitSymbols = { S: "♠", H: "♥", D: "♦", C: "♣" };
+                        
+                        return (
+                          <div key={cardIndex} className="result-card" data-suit={suit}>
+                            <div className="card-rank">{rank}</div>
+                            <div className="card-suit">{suitSymbols[suit]}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Show money changes for other players */}
+            {currentHandResult.winners && currentHandResult.winners.length > 0 && game.winner_info && game.winner_info.money_changes && (
+              <div className="money-changes-section">
+                <h3>💸 Money Changes</h3>
+                <div className="money-changes-list">
+                  {game.winner_info.money_changes.map(player => {
+                    const isWinner = currentHandResult.winners.some(w => w.player_name === player.player_name);
+                    if (isWinner) return null; // Winners already shown above
+                    
+                    return (
+                      <div key={player.player_id} className="money-change-item loser">
+                        <span className="player-name">{player.player_name}</span>
+                        <span className="money-change">-${Number(player.total_bet_this_hand || 0).toFixed(2)}</span>
+                      </div>
+                    );
+                  }).filter(Boolean)}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="hand-results-footer">
+            <div className="hand-results-buttons">
+              <button 
+                className="ready-btn"
+                onClick={handlePlayerReady}
+              >
+                ✅ I'm Ready for Next Hand
+              </button>
+              <button 
+                className="cash-out-btn"
+                onClick={handleCashOut}
+              >
+                💰 Cash Out & Leave
+              </button>
+            </div>
+            
+            {/* Show readiness status if available */}
+            {game && game.players && (
+              <div className="readiness-status">
+                <div className="status-text">
+                  Waiting for all players to be ready...
+                </div>
+                <div className="players-ready">
+                  {game.players.map(player => {
+                    const isReady = player.ready_for_next_hand || false;
+                    const isCurrentUser = getCurrentUserInfo() && 
+                      (getCurrentUserInfo().id === player.player.user.id || 
+                       getCurrentUserInfo().username === player.player.user.username);
+                    
+                    return (
+                      <div key={player.id} className={`player-ready-indicator ${isReady ? 'ready' : 'not-ready'} ${isCurrentUser ? 'current-user' : ''}`}>
+                        <span className="player-name">{player.player.user.username}</span>
+                        <span className="ready-status">{isReady ? '✅' : '⏳'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="poker-game-container">
       {renderConnectionStatus()}
@@ -774,6 +1070,7 @@ const PokerTable = () => {
       {renderActionButtons()}
       {renderGameLogs()}
       {renderPopupMessage()}
+      {renderHandResultsPopup()}
       {error && <div className="error-message">{error}</div>}
     </div>
   );

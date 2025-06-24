@@ -4,6 +4,7 @@ from django.contrib.auth.models import User
 import json
 
 class PokerTable(models.Model):
+    """Represents a poker table with betting limits and player capacity."""
     name = models.CharField(max_length=100)
     max_players = models.IntegerField(default=9)
     small_blind = models.DecimalField(max_digits=10, decimal_places=2)
@@ -13,16 +14,20 @@ class PokerTable(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
+        """Returns the string representation of the poker table."""
         return self.name
 
 class Player(models.Model):
+    """Represents a poker player with their account balance."""
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     
     def __str__(self):
+        """Returns the string representation of the player."""
         return self.user.username
 
 class Game(models.Model):
+    """Represents a poker game instance with all game state information."""
     GAME_STATUS_CHOICES = [
         ('WAITING', 'Waiting for players'),
         ('PLAYING', 'Game in progress'),
@@ -35,6 +40,7 @@ class Game(models.Model):
         ('TURN', 'Turn'),
         ('RIVER', 'River'),
         ('SHOWDOWN', 'Showdown'),
+        ('WAITING_FOR_PLAYERS', 'Waiting for players to be ready'),
     ]
 
     table = models.ForeignKey(PokerTable, on_delete=models.CASCADE)
@@ -50,25 +56,31 @@ class Game(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
+        """Returns the string representation of the game."""
         return f"Game at {self.table.name}"
     
     def set_community_cards(self, cards_list):
+        """Stores community cards as JSON string."""
         self.community_cards = json.dumps(cards_list)
     
     def get_community_cards(self):
+        """Retrieves community cards from JSON string."""
         if self.community_cards:
             return json.loads(self.community_cards)
         return []
     
     def set_winner_info(self, winner_data):
+        """Stores winner information as JSON string."""
         self.winner_info = json.dumps(winner_data)
     
     def get_winner_info(self):
+        """Retrieves winner information from JSON string."""
         if self.winner_info:
             return json.loads(self.winner_info)
         return None
 
 class PlayerGame(models.Model):
+    """Represents a player's participation in a specific game."""
     player = models.ForeignKey(Player, on_delete=models.CASCADE)
     game = models.ForeignKey(Game, on_delete=models.CASCADE)
     seat_position = models.IntegerField()
@@ -77,22 +89,27 @@ class PlayerGame(models.Model):
     cards = models.CharField(max_length=50, blank=True, null=True)  # Stored as JSON string
     current_bet = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_bet = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    ready_for_next_hand = models.BooleanField(default=False)  # Player ready for next hand
     
     class Meta:
         unique_together = ['game', 'seat_position']
     
     def __str__(self):
+        """Returns the string representation of the player game."""
         return f"{self.player} at {self.game}"
     
     def set_cards(self, cards_list):
+        """Stores player's hole cards as JSON string."""
         self.cards = json.dumps(cards_list)
     
     def get_cards(self):
+        """Retrieves player's hole cards from JSON string."""
         if self.cards:
             return json.loads(self.cards)
         return []
     
 class GameAction(models.Model):
+    """Represents a player's action during a poker game."""
     ACTION_CHOICES = [
         ('FOLD', 'Fold'),
         ('CHECK', 'Check'),
@@ -115,11 +132,13 @@ class GameAction(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
+        """Returns the string representation of the game action."""
         if self.action_type in ['BET', 'RAISE']:
             return f"{self.player_game.player} {self.action_type} {self.amount}"
         return f"{self.player_game.player} {self.action_type}"
 
 class HandHistory(models.Model):
+    """Stores historical data for completed poker hands."""
     game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='hand_history')
     hand_number = models.PositiveIntegerField()
     winner_info = models.TextField()  # JSON data with winner details
@@ -135,36 +154,45 @@ class HandHistory(models.Model):
         ordering = ['-completed_at']
     
     def __str__(self):
+        """Returns the string representation of the hand history."""
         return f"Hand {self.hand_number} - Game {self.game.id}"
     
     def set_winner_info(self, winner_data):
+        """Stores winner information as JSON string."""
         self.winner_info = json.dumps(winner_data)
     
     def get_winner_info(self):
+        """Retrieves winner information from JSON string."""
         if self.winner_info:
             return json.loads(self.winner_info)
         return None
     
     def set_player_cards(self, cards_data):
+        """Stores all players' hole cards as JSON string."""
         self.player_cards = json.dumps(cards_data)
     
     def get_player_cards(self):
+        """Retrieves all players' hole cards from JSON string."""
         if self.player_cards:
             return json.loads(self.player_cards)
         return {}
     
     def set_actions(self, actions_data):
+        """Stores all game actions as JSON string."""
         self.actions = json.dumps(actions_data)
     
     def get_actions(self):
+        """Retrieves all game actions from JSON string."""
         if self.actions:
             return json.loads(self.actions)
         return []
     
     def set_community_cards(self, cards_list):
+        """Stores community cards as JSON string."""
         self.community_cards = json.dumps(cards_list)
     
     def get_community_cards(self):
+        """Retrieves community cards from JSON string."""
         if self.community_cards:
             return json.loads(self.community_cards)
         return []

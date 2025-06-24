@@ -9,7 +9,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 class PokerGameConsumer(AsyncWebsocketConsumer):
+    """WebSocket consumer for real-time poker game updates."""
     async def connect(self):
+        """Handle WebSocket connection with authentication and permission checks."""
         try:
             self.game_id = self.scope['url_route']['kwargs']['game_id']
             self.game_group_name = f'game_{self.game_id}'
@@ -53,6 +55,7 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
             await self.close(code=1011)  # Internal server error
     
     async def disconnect(self, close_code):
+        """Handle WebSocket disconnection and cleanup."""
         # Leave game group
         if hasattr(self, 'game_group_name'):
             await self.channel_layer.group_discard(
@@ -64,15 +67,15 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
         if user and not isinstance(user, AnonymousUser):
             logger.info(f"WebSocket disconnected for user {user.username}, close code: {close_code}")
     
-    # Receive message from WebSocket
     async def receive(self, text_data):
+        """Receive message from WebSocket client (currently not used for game actions)."""
         # This consumer doesn't handle incoming messages from clients
         # Game actions are handled by the REST API
         logger.info(f"Received WebSocket message: {text_data}")
         pass
     
-    # Receive message from game group
     async def game_update(self, event):
+        """Receive and forward game update messages from the game group."""
         # Log game update details
         game_data = event.get('data', {})
         user = self.scope.get('user')
@@ -94,6 +97,7 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
     
     @database_sync_to_async
     def can_join_game(self, user):
+        """Check if user is authorized to join this poker game."""
         try:
             game = Game.objects.get(id=self.game_id)
             # Check if user is part of the game
@@ -107,6 +111,7 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
     
     @database_sync_to_async
     def get_game_state(self):
+        """Get current game state for the user connecting to WebSocket."""
         from .serializers import GameSerializer
         from rest_framework.request import Request
         from django.http import HttpRequest

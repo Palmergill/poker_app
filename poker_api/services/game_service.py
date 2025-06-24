@@ -557,6 +557,17 @@ class GameService:
             winner.stack += game.pot
             winner.save()
             
+            # Get all players' money changes for this hand
+            all_players_money_changes = []
+            for pg in PlayerGame.objects.filter(game=game):
+                all_players_money_changes.append({
+                    'player_name': pg.player.user.username,
+                    'player_id': pg.player.id,
+                    'total_bet_this_hand': float(pg.total_bet),
+                    'current_stack': float(pg.stack),
+                    'was_active': pg.is_active
+                })
+
             # Store winner information
             winner_data = {
                 'type': 'single_winner',
@@ -566,11 +577,19 @@ class GameService:
                     'winning_amount': float(game.pot),
                     'reason': 'All other players folded'
                 }],
-                'pot_amount': float(game.pot)
+                'pot_amount': float(game.pot),
+                'money_changes': all_players_money_changes
             }
             game.set_winner_info(winner_data)
+            
+            # Save hand history BEFORE resetting pot
+            GameService._save_hand_history(game)
+            
             game.pot = 0
             game.save()
+            
+            # Start new hand
+            GameService._start_new_hand(game)
             
             # Broadcast game update
             GameService.broadcast_game_update(game.id)
@@ -604,6 +623,17 @@ class GameService:
             winner.stack += win_amount
             winner.save()
         
+        # Get all players' money changes for this hand
+        all_players_money_changes = []
+        for pg in PlayerGame.objects.filter(game=game):
+            all_players_money_changes.append({
+                'player_name': pg.player.user.username,
+                'player_id': pg.player.id,
+                'total_bet_this_hand': float(pg.total_bet),
+                'current_stack': float(pg.stack),
+                'was_active': pg.is_active
+            })
+
         # Store winner information
         winner_data = {
             'type': 'showdown_winner',
@@ -626,18 +656,20 @@ class GameService:
                 'hand_name': hand_name,
                 'hole_cards': pg.get_cards(),
                 'hand_rank': hand_rank
-            } for hand_rank, hand_value, hand_name, pg in sorted_hands]
+            } for hand_rank, hand_value, hand_name, pg in sorted_hands],
+            'money_changes': all_players_money_changes
         }
         game.set_winner_info(winner_data)
         
-        # Reset pot
+        # Save hand history BEFORE resetting pot
+        GameService._save_hand_history(game)
+        
+        # Reset pot but keep winner info for popup
         game.pot = 0
+        game.phase = 'WAITING_FOR_PLAYERS'  # Set to waiting state instead of auto-starting
         game.save()
         
-        # Start new hand
-        GameService._start_new_hand(game)
-        
-        # Broadcast game update
+        # Broadcast game update WITH winner info so frontend can show popup
         GameService.broadcast_game_update(game.id)
     
     @staticmethod
@@ -649,6 +681,17 @@ class GameService:
             winner.stack += game.pot
             winner.save()
             
+            # Get all players' money changes for this hand
+            all_players_money_changes = []
+            for pg in PlayerGame.objects.filter(game=game):
+                all_players_money_changes.append({
+                    'player_name': pg.player.user.username,
+                    'player_id': pg.player.id,
+                    'total_bet_this_hand': float(pg.total_bet),
+                    'current_stack': float(pg.stack),
+                    'was_active': pg.is_active
+                })
+
             # Store winner information
             winner_data = {
                 'type': 'single_winner',
@@ -658,19 +701,20 @@ class GameService:
                     'winning_amount': float(game.pot),
                     'reason': 'All other players folded'
                 }],
-                'pot_amount': float(game.pot)
+                'pot_amount': float(game.pot),
+                'money_changes': all_players_money_changes
             }
             game.set_winner_info(winner_data)
         
-        # Reset pot
+        # Save hand history BEFORE resetting pot
+        GameService._save_hand_history(game)
+        
+        # Reset pot but keep winner info for popup
         game.pot = 0
-        game.phase = 'SHOWDOWN'
+        game.phase = 'WAITING_FOR_PLAYERS'  # Set to waiting state instead of auto-starting
         game.save()
         
-        # Start new hand
-        GameService._start_new_hand(game)
-        
-        # Broadcast game update
+        # Broadcast game update WITH winner info so frontend can show popup
         GameService.broadcast_game_update(game.id)
 
     @staticmethod
@@ -697,6 +741,12 @@ class GameService:
         
         # Get current hand number
         current_hand_number = game.hand_count + 1
+        
+        # Check if hand history already exists for this hand
+        existing_history = HandHistory.objects.filter(game=game, hand_number=current_hand_number).first()
+        if existing_history:
+            print(f"⚠️ Hand history already exists for game {game.id}, hand {current_hand_number}")
+            return
         
         # Collect all player cards
         player_cards = {}
@@ -818,13 +868,12 @@ class GameService:
                 pg.cards = None
                 pg.current_bet = 0
                 pg.total_bet = 0
+                pg.ready_for_next_hand = False  # Reset readiness status
                 pg.save()
             else:
                 pg.is_active = False
+                pg.ready_for_next_hand = False  # Reset readiness status
                 pg.save()
-        
-        # Save hand history before starting new hand
-        GameService._save_hand_history(game)
         
         # Get active players (those with money)
         active_players = PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position')
@@ -903,8 +952,8 @@ class GameService:
         
         # Check if this is a hand completion broadcast
         if hasattr(game, 'winner_info') and game.winner_info:
-            winner_info = game.winner_info
-            if winner_info.get('winners'):
+            winner_info = game.get_winner_info()  # Use the method to get parsed JSON
+            if winner_info and winner_info.get('winners'):
                 winner_name = winner_info['winners'][0].get('player_name', 'Unknown')
                 logger.info(f"🏆 Broadcasting hand completion - Winner: {winner_name}")
         

@@ -61,6 +61,7 @@ apiClient.interceptors.response.use(
 );
 
 const authService = {
+  // Authenticate user with username and password
   login: async (username, password) => {
     const response = await axios.post(`${API_URL}/token/`, {
       username,
@@ -71,16 +72,18 @@ const authService = {
     return response.data;
   },
 
+  // Log out user by removing stored tokens
   logout: () => {
     localStorage.removeItem("accessToken");
     localStorage.removeItem("refreshToken");
   },
 
+  // Check if user is currently authenticated
   isAuthenticated: () => {
     return !!localStorage.getItem("accessToken");
   },
   
-  // Check if current user is admin
+  // Check if current user has admin privileges
   isAdmin: () => {
     try {
       const userStr = localStorage.getItem("user");
@@ -96,17 +99,26 @@ const authService = {
 };
 
 const playerService = {
+  // Get current player's profile information
   getProfile: () => apiClient.get(`/players/me/`),
+  // Deposit money to player's account
   deposit: (amount) => apiClient.post(`/players/deposit/`, { amount }),
+  // Withdraw money from player's account
   withdraw: (amount) => apiClient.post(`/players/withdraw/`, { amount }),
 };
 
 const tableService = {
+  // Get all available poker tables
   getTables: () => apiClient.get(`/tables/`),
+  // Get specific table details
   getTable: (id) => apiClient.get(`/tables/${id}/`),
+  // Create a new poker table
   createTable: (tableData) => apiClient.post(`/tables/`, tableData),
+  // Delete a specific table
   deleteTable: (id) => apiClient.delete(`/tables/${id}/`),
+  // Delete all tables (admin only)
   deleteAllTables: () => apiClient.delete(`/tables/delete_all/`),
+  // Join a table with specified buy-in amount
   joinTable: (id, buyIn) =>
     apiClient.post(`/tables/${id}/join_table/`, { buy_in: buyIn }),
 };
@@ -114,12 +126,23 @@ const tableService = {
 // Updated sections for src/services/apiService.js
 
 const gameService = {
+  // Get all games
   getGames: () => apiClient.get(`/games/`),
+  // Get specific game details
   getGame: (id) => apiClient.get(`/games/${id}/`),
+  // Start a poker game
   startGame: (id) => apiClient.post(`/games/${id}/start/`),
+  // Leave a poker game
   leaveGame: (id) => apiClient.post(`/games/${id}/leave/`),
+  // Take a poker action (fold, check, call, bet, raise)
   takeAction: (id, actionType, amount = 0) =>
     apiClient.post(`/games/${id}/action/`, { action_type: actionType, amount }),
+  
+  // Set player ready for next hand
+  setPlayerReady: (id) => apiClient.post(`/games/${id}/ready/`),
+  
+  // Cash out from game and leave
+  cashOut: (id) => apiClient.post(`/games/${id}/cash_out/`),
   
   // Reset game state when it gets corrupted
   resetGameState: (id) => apiClient.post(`/games/${id}/reset_game_state/`),
@@ -127,7 +150,7 @@ const gameService = {
   // Admin only - delete game regardless of status
   deleteGame: (id) => apiClient.delete(`/games/${id}/`),
 
-  // Updated WebSocket connection with better error handling
+  // Connect to WebSocket for real-time game updates
   connectToGameSocket: (
     gameId,
     onMessageCallback,
@@ -149,10 +172,12 @@ const gameService = {
     try {
       const socket = new WebSocket(wsUrl);
 
+      // Handle successful WebSocket connection
       socket.onopen = (event) => {
         console.log("WebSocket connected successfully to game", gameId);
       };
 
+      // Handle incoming WebSocket messages
       socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -164,11 +189,13 @@ const gameService = {
         }
       };
 
+      // Handle WebSocket errors
       socket.onerror = (error) => {
         console.error("WebSocket error:", error);
         if (onErrorCallback) onErrorCallback("WebSocket connection error");
       };
 
+      // Handle WebSocket connection close
       socket.onclose = (event) => {
         console.log("WebSocket closed:", event.code, event.reason);
 
@@ -202,12 +229,12 @@ const gameService = {
     }
   },
 
-  // Helper function to check if WebSocket is available
+  // Check if WebSocket is supported by the browser
   isWebSocketSupported: () => {
     return "WebSocket" in window;
   },
 
-  // Get hand history for a game
+  // Get hand history for a specific game
   getHandHistory: (gameId) => apiClient.get(`/games/${gameId}/hand-history/`),
 };
 

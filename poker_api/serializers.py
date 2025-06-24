@@ -44,7 +44,7 @@ class PlayerGameSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PlayerGame
-        fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cards', 'current_bet', 'total_bet']
+        fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand']
     
     def get_cards(self, obj):
         # Always send cards data and let frontend handle visibility

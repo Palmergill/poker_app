@@ -288,6 +288,120 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'You are not at this table'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+    
+    @action(detail=True, methods=['post'])
+    def ready(self, request, pk=None):
+        """Mark player as ready for next hand"""
+        game = self.get_object()
+        player, created = Player.objects.get_or_create(user=request.user)
+        
+        try:
+            player_game = PlayerGame.objects.get(game=game, player=player)
+            
+            # Can only mark ready if hand has ended (winner_info exists)
+            if not game.get_winner_info():
+                return Response(
+                    {'error': 'Cannot mark ready - hand has not ended yet'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Mark player as ready
+            player_game.ready_for_next_hand = True
+            player_game.save()
+            
+            logger.info(f"🟢 Player {request.user.username} marked ready for next hand in game {game.id}")
+            
+            # Check if all active players are ready
+            active_players = PlayerGame.objects.filter(game=game, stack__gt=0)
+            ready_players = active_players.filter(ready_for_next_hand=True)
+            
+            logger.info(f"📊 Ready status: {ready_players.count()}/{active_players.count()} players ready")
+            
+            # If all players are ready, start next hand
+            if active_players.count() > 1 and ready_players.count() == active_players.count():
+                logger.info(f"🎯 All players ready! Starting next hand for game {game.id}")
+                
+                # Clear winner info first
+                game.winner_info = None
+                game.save()
+                
+                # Start the new hand properly
+                GameService._start_new_hand(game)
+                
+                # Broadcast update to show new hand started
+                GameService.broadcast_game_update(game.id)
+            else:
+                # Just broadcast readiness update
+                GameService.broadcast_game_update(game.id)
+            
+            return Response({'success': True, 'ready_count': ready_players.count(), 'total_count': active_players.count()})
+            
+        except PlayerGame.DoesNotExist:
+            return Response(
+                {'error': 'You are not at this table'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def cash_out(self, request, pk=None):
+        """Cash out from game and leave table"""
+        game = self.get_object()
+        player, created = Player.objects.get_or_create(user=request.user)
+        
+        try:
+            player_game = PlayerGame.objects.get(game=game, player=player)
+            
+            # Cannot cash out during an active hand if still active
+            if game.status == 'PLAYING' and player_game.is_active:
+                return Response(
+                    {'error': 'Cannot cash out during an active hand. Wait for hand to end or fold first.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Cash out chips to player balance
+            cash_out_amount = player_game.stack
+            player.balance += cash_out_amount
+            player.save()
+            
+            logger.info(f"💰 Player {request.user.username} cashed out ${cash_out_amount} from game {game.id}")
+            
+            # Remove player from game
+            player_game.delete()
+            
+            # Broadcast update to remove player from UI
+            GameService.broadcast_game_update(game.id)
+            
+            # If no players left, end the game
+            remaining_players = PlayerGame.objects.filter(game=game).count()
+            if remaining_players == 0:
+                game.status = 'FINISHED'
+                game.save()
+                logger.info(f"🏁 Game {game.id} ended - no players remaining")
+            elif remaining_players == 1:
+                # Only one player left, they win by default
+                last_player = PlayerGame.objects.filter(game=game).first()
+                if last_player:
+                    # Award any remaining pot to the last player
+                    if game.pot > 0:
+                        last_player.stack += game.pot
+                        last_player.save()
+                        game.pot = 0
+                    
+                    game.status = 'FINISHED'
+                    game.save()
+                    logger.info(f"🏁 Game {game.id} ended - only one player remaining")
+            
+            return Response({
+                'success': True, 
+                'cashed_out': str(cash_out_amount),
+                'new_balance': str(player.balance)
+            })
+            
+        except PlayerGame.DoesNotExist:
+            return Response(
+                {'error': 'You are not at this table'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Player.objects.all()
