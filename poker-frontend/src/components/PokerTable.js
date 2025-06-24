@@ -970,19 +970,52 @@ const PokerTable = () => {
                     <div className="winner-reason">{winner.reason}</div>
                   )}
                   {winner.hole_cards && winner.hole_cards.length > 0 && (
+                    <div className="player-hole-cards">
+                      <div className="hand-label">Hole Cards:</div>
+                      <div className="hole-cards-container">
+                        {winner.hole_cards.map((card, cardIndex) => {
+                          const rank = card.slice(0, -1);
+                          const suit = card.slice(-1);
+                          const suitSymbols = { S: "♠", H: "♥", D: "♦", C: "♣" };
+                          
+                          return (
+                            <div 
+                              key={cardIndex} 
+                              className="result-card hole-card-original" 
+                              data-suit={suit}
+                            >
+                              <div className="card-rank">{rank}</div>
+                              <div className="card-suit">{suitSymbols[suit]}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {winner.best_hand_cards && winner.best_hand_cards.length > 0 && (
                     <div className="winner-cards">
-                      {winner.hole_cards.map((card, cardIndex) => {
-                        const rank = card.slice(0, -1);
-                        const suit = card.slice(-1);
-                        const suitSymbols = { S: "♠", H: "♥", D: "♦", C: "♣" };
-                        
-                        return (
-                          <div key={cardIndex} className="result-card" data-suit={suit}>
-                            <div className="card-rank">{rank}</div>
-                            <div className="card-suit">{suitSymbols[suit]}</div>
-                          </div>
-                        );
-                      })}
+                      <div className="hand-label">Winning Hand:</div>
+                      <div className="hand-cards-container">
+                        {winner.best_hand_cards.map((card, cardIndex) => {
+                          const rank = card.slice(0, -1);
+                          const suit = card.slice(-1);
+                          const suitSymbols = { S: "♠", H: "♥", D: "♦", C: "♣" };
+                          
+                          // Check if this card is one of the player's hole cards
+                          const isHoleCard = winner.hole_cards && winner.hole_cards.includes(card);
+                          
+                          return (
+                            <div 
+                              key={cardIndex} 
+                              className={`result-card ${isHoleCard ? 'hole-card' : 'community-card'}`} 
+                              data-suit={suit}
+                            >
+                              <div className="card-rank">{rank}</div>
+                              <div className="card-suit">{suitSymbols[suit]}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

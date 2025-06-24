@@ -748,9 +748,68 @@ button:disabled {
 
 .winner-cards {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.hand-label {
+  font-size: 14px;
+  font-weight: bold;
+  color: #2c3e50;
+  margin-bottom: 5px;
+}
+
+.winner-cards .result-card {
+  transition: transform 0.3s ease;
+}
+
+/* Style for hole cards in winning hand */
+.winner-cards .result-card.hole-card {
+  border: 3px solid #27ae60;
+  transform: translateY(-8px);
+  box-shadow: 0 6px 15px rgba(39, 174, 96, 0.4);
+  background: linear-gradient(135deg, #ffffff 0%, #f8fff9 100%);
+}
+
+/* Style for community cards in winning hand */
+.winner-cards .result-card.community-card {
+  border: 2px solid #3498db;
+  box-shadow: 0 4px 8px rgba(52, 152, 219, 0.3);
+}
+
+/* Player's original hole cards section */
+.player-hole-cards {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 15px 0;
+  padding: 15px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+
+.hole-cards-container {
+  display: flex;
   gap: 8px;
   justify-content: center;
-  margin-top: 15px;
+}
+
+.result-card.hole-card-original {
+  border: 2px solid #6c757d;
+  box-shadow: 0 4px 8px rgba(108, 117, 125, 0.3);
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+}
+
+/* Container for the hand cards */
+.hand-cards-container {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 .result-card {

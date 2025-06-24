@@ -22,9 +22,10 @@ class HandEvaluator:
     @staticmethod
     def evaluate_hand(cards):
         """
-        Evaluates a hand of 5-7 cards and returns a tuple of (hand_rank, hand_value, hand_name)
+        Evaluates a hand of 5-7 cards and returns a tuple of (hand_rank, hand_value, hand_name, best_hand_cards)
         Lower hand_rank value means stronger hand (1 is best, 10 is worst)
         hand_value is used to break ties within the same hand_rank
+        best_hand_cards is a list of the 5 cards that make up the best hand
         """
         if len(cards) < 5:
             raise ValueError("Not enough cards to evaluate a hand")
@@ -36,50 +37,52 @@ class HandEvaluator:
         # Royal Flush
         royal_flush = HandEvaluator._check_royal_flush(cards)
         if royal_flush:
-            return (1, royal_flush[1], "Royal Flush")
+            return (1, royal_flush[1], "Royal Flush", royal_flush[0])
             
         # Straight Flush
         straight_flush = HandEvaluator._check_straight_flush(cards)
         if straight_flush:
-            return (2, straight_flush[1], "Straight Flush")
+            return (2, straight_flush[1], "Straight Flush", straight_flush[0])
             
         # Four of a Kind
         four_kind = HandEvaluator._check_four_of_a_kind(cards)
         if four_kind:
-            return (3, four_kind[1], "Four of a Kind")
+            return (3, four_kind[1], "Four of a Kind", four_kind[0])
             
         # Full House
         full_house = HandEvaluator._check_full_house(cards)
         if full_house:
-            return (4, full_house[1], "Full House")
+            return (4, full_house[1], "Full House", full_house[0])
             
         # Flush
         flush = HandEvaluator._check_flush(cards)
         if flush:
-            return (5, flush[1], "Flush")
+            return (5, flush[1], "Flush", flush[0])
             
         # Straight
         straight = HandEvaluator._check_straight(cards)
         if straight:
-            return (6, straight[1], "Straight")
+            return (6, straight[1], "Straight", straight[0])
             
         # Three of a Kind
         three_kind = HandEvaluator._check_three_of_a_kind(cards)
         if three_kind:
-            return (7, three_kind[1], "Three of a Kind")
+            return (7, three_kind[1], "Three of a Kind", three_kind[0])
             
         # Two Pair
         two_pair = HandEvaluator._check_two_pair(cards)
         if two_pair:
-            return (8, two_pair[1], "Two Pair")
+            return (8, two_pair[1], "Two Pair", two_pair[0])
             
         # One Pair
         one_pair = HandEvaluator._check_one_pair(cards)
         if one_pair:
-            return (9, one_pair[1], "One Pair")
+            return (9, one_pair[1], "One Pair", one_pair[0])
             
         # High Card
-        return (10, HandEvaluator._get_high_card_value(cards), "High Card")
+        sorted_cards = sorted(cards, key=lambda card: card.rank_value, reverse=True)
+        top_five = sorted_cards[:5]
+        return (10, HandEvaluator._get_high_card_value(cards), "High Card", top_five)
     
     @staticmethod
     def _check_royal_flush(cards):

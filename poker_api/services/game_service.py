@@ -607,15 +607,15 @@ class GameService:
             all_cards = hole_cards + community_cards
             
             # Evaluate best hand
-            hand_rank, hand_value, hand_name = HandEvaluator.evaluate_hand(all_cards)
-            best_hands[pg.id] = (hand_rank, hand_value, hand_name, pg)
+            hand_rank, hand_value, hand_name, best_hand_cards = HandEvaluator.evaluate_hand(all_cards)
+            best_hands[pg.id] = (hand_rank, hand_value, hand_name, best_hand_cards, pg)
         
         # Sort by hand strength (lower rank is better, higher value within rank is better)
         sorted_hands = sorted(best_hands.values(), key=lambda x: (x[0], [-v for v in x[1]]))
         
         # Find winners (players with the same best hand)
         best_hand = sorted_hands[0]
-        winners = [pg for rank, value, name, pg in sorted_hands if (rank, value) == (best_hand[0], best_hand[1])]
+        winners = [pg for rank, value, name, best_cards, pg in sorted_hands if (rank, value) == (best_hand[0], best_hand[1])]
         
         # Split pot among winners
         win_amount = game.pot / Decimal(len(winners))
@@ -642,7 +642,8 @@ class GameService:
                 'player_id': winner.player.id,
                 'winning_amount': float(win_amount),
                 'hand_name': best_hand[2],
-                'hole_cards': winner.get_cards()
+                'hole_cards': winner.get_cards(),
+                'best_hand_cards': [str(card) for card in best_hand[3]]
             } for winner in winners],
             'pot_amount': float(game.pot),
             'community_cards': game.get_community_cards(),
@@ -655,8 +656,9 @@ class GameService:
                 'player_name': pg.player.user.username,
                 'hand_name': hand_name,
                 'hole_cards': pg.get_cards(),
-                'hand_rank': hand_rank
-            } for hand_rank, hand_value, hand_name, pg in sorted_hands],
+                'hand_rank': hand_rank,
+                'best_hand_cards': [str(card) for card in best_cards]
+            } for hand_rank, hand_value, hand_name, best_cards, pg in sorted_hands],
             'money_changes': all_players_money_changes
         }
         game.set_winner_info(winner_data)
