@@ -1,5 +1,8 @@
 # poker_api/utils/hand_evaluator.py
 from poker_api.utils.card_utils import Card
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class HandEvaluator:
@@ -28,7 +31,10 @@ class HandEvaluator:
         best_hand_cards is a list of the 5 cards that make up the best hand
         """
         if len(cards) < 5:
+            logger.error(f"Cannot evaluate hand with {len(cards)} cards, need at least 5")
             raise ValueError("Not enough cards to evaluate a hand")
+        
+        logger.debug(f"Evaluating hand with {len(cards)} cards: {[str(c) for c in cards]}")
             
         # Make a copy of the cards to avoid modifying the original
         cards = sorted(cards, reverse=True, key=lambda card: card.rank_value)
@@ -37,51 +43,61 @@ class HandEvaluator:
         # Royal Flush
         royal_flush = HandEvaluator._check_royal_flush(cards)
         if royal_flush:
+            logger.debug(f"Found Royal Flush: {[str(c) for c in royal_flush[0]]}")
             return (1, royal_flush[1], "Royal Flush", royal_flush[0])
             
         # Straight Flush
         straight_flush = HandEvaluator._check_straight_flush(cards)
         if straight_flush:
+            logger.debug(f"Found Straight Flush: {[str(c) for c in straight_flush[0]]}")
             return (2, straight_flush[1], "Straight Flush", straight_flush[0])
             
         # Four of a Kind
         four_kind = HandEvaluator._check_four_of_a_kind(cards)
         if four_kind:
+            logger.debug(f"Found Four of a Kind: {[str(c) for c in four_kind[0]]}")
             return (3, four_kind[1], "Four of a Kind", four_kind[0])
             
         # Full House
         full_house = HandEvaluator._check_full_house(cards)
         if full_house:
+            logger.debug(f"Found Full House: {[str(c) for c in full_house[0]]}")
             return (4, full_house[1], "Full House", full_house[0])
             
         # Flush
         flush = HandEvaluator._check_flush(cards)
         if flush:
+            logger.debug(f"Found Flush: {[str(c) for c in flush[0]]}")
             return (5, flush[1], "Flush", flush[0])
             
         # Straight
         straight = HandEvaluator._check_straight(cards)
         if straight:
+            logger.debug(f"Found Straight: {[str(c) for c in straight[0]]}")
             return (6, straight[1], "Straight", straight[0])
             
         # Three of a Kind
         three_kind = HandEvaluator._check_three_of_a_kind(cards)
         if three_kind:
+            logger.debug(f"Found Three of a Kind: {[str(c) for c in three_kind[0]]}")
             return (7, three_kind[1], "Three of a Kind", three_kind[0])
             
         # Two Pair
         two_pair = HandEvaluator._check_two_pair(cards)
         if two_pair:
+            logger.debug(f"Found Two Pair: {[str(c) for c in two_pair[0]]}")
             return (8, two_pair[1], "Two Pair", two_pair[0])
             
         # One Pair
         one_pair = HandEvaluator._check_one_pair(cards)
         if one_pair:
+            logger.debug(f"Found One Pair: {[str(c) for c in one_pair[0]]}")
             return (9, one_pair[1], "One Pair", one_pair[0])
             
         # High Card
         sorted_cards = sorted(cards, key=lambda card: card.rank_value, reverse=True)
         top_five = sorted_cards[:5]
+        logger.debug(f"Found High Card: {[str(c) for c in top_five]}")
         return (10, HandEvaluator._get_high_card_value(cards), "High Card", top_five)
     
     @staticmethod

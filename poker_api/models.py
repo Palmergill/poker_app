@@ -86,13 +86,17 @@ class PlayerGame(models.Model):
     seat_position = models.IntegerField()
     stack = models.DecimalField(max_digits=10, decimal_places=2)
     is_active = models.BooleanField(default=True)
+    cashed_out = models.BooleanField(default=False)  # Player has cashed out but still at table
     cards = models.CharField(max_length=50, blank=True, null=True)  # Stored as JSON string
     current_bet = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_bet = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     ready_for_next_hand = models.BooleanField(default=False)  # Player ready for next hand
     
     class Meta:
-        unique_together = ['game', 'seat_position']
+        unique_together = [
+            ['game', 'seat_position'],  # Each seat can only be occupied by one player
+            ['game', 'player']          # Each player can only join a game once
+        ]
     
     def __str__(self):
         """Returns the string representation of the player game."""
@@ -107,6 +111,38 @@ class PlayerGame(models.Model):
         if self.cards:
             return json.loads(self.cards)
         return []
+    
+    def cash_out(self):
+        """Cash out the player - they become inactive but stay at the table."""
+        self.is_active = False
+        self.cashed_out = True
+        self.save()
+    
+    def buy_back_in(self, amount):
+        """Buy back in - only available if player is cashed out."""
+        if self.cashed_out:
+            self.stack = amount
+            self.is_active = True
+            self.cashed_out = False
+            self.save()
+    
+    def can_leave_table(self):
+        """Check if player can leave the table (only if cashed out)."""
+        return self.cashed_out
+    
+    def can_buy_back_in(self):
+        """Check if player can buy back in (only if cashed out)."""
+        return self.cashed_out
+    
+    @property
+    def status(self):
+        """Return the current status of the player."""
+        if self.cashed_out:
+            return 'CASHED_OUT'
+        elif self.is_active:
+            return 'ACTIVE'
+        else:
+            return 'INACTIVE'
     
 class GameAction(models.Model):
     """Represents a player's action during a poker game."""

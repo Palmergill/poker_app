@@ -12,9 +12,10 @@ from .serializers import (
 from .services.game_service import GameService
 from django.contrib.auth.models import User
 from django.db import transaction
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import logging
 
+# Get logger for API views
 logger = logging.getLogger(__name__)
 
 class PokerTableViewSet(viewsets.ModelViewSet):
@@ -29,7 +30,14 @@ class PokerTableViewSet(viewsets.ModelViewSet):
         player, created = Player.objects.get_or_create(user=request.user)
         
         # Get buy-in amount from request and convert to Decimal
-        buy_in = Decimal(str(request.data.get('buy_in', table.min_buy_in)))
+        try:
+            buy_in_raw = request.data.get('buy_in', table.min_buy_in)
+            buy_in = Decimal(str(buy_in_raw))
+        except (ValueError, TypeError, InvalidOperation):
+            return Response(
+                {'error': 'Invalid buy-in amount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Validate buy-in amount
         if buy_in < table.min_buy_in:
@@ -129,6 +137,23 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
         context['request'] = self.request
         return context
     
+    def retrieve(self, request, *args, **kwargs):
+        """Override retrieve to add error handling"""
+        try:
+            return super().retrieve(request, *args, **kwargs)
+        except KeyError as e:
+            logger.error(f"KeyError in game serialization for user {request.user.username}: {e}")
+            return Response(
+                {'error': f'Game serialization error: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error in game retrieve for user {request.user.username}: {e}")
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):
         """Start the game"""
@@ -186,8 +211,8 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'error': 'Game is not in progress'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Get all active players
-            active_players = list(PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position'))
+            # Get all active players (excluding cashed out players)
+            active_players = list(PlayerGame.objects.filter(game=game, is_active=True, cashed_out=False).order_by('seat_position'))
             
             if len(active_players) < 2:
                 return Response({'error': 'Not enough active players'}, status=status.HTTP_400_BAD_REQUEST)
@@ -224,7 +249,7 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
         """Get detailed game state for debugging"""
         game = self.get_object()
         
-        active_players = list(PlayerGame.objects.filter(game=game, is_active=True).order_by('seat_position'))
+        active_players = list(PlayerGame.objects.filter(game=game, is_active=True, cashed_out=False).order_by('seat_position'))
         all_players = list(PlayerGame.objects.filter(game=game).order_by('seat_position'))
         
         debug_info = {
@@ -256,34 +281,60 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=True, methods=['post'])
     def leave(self, request, pk=None):
-        """Leave the game and cash out"""
+        """Leave the table completely (only works if already cashed out)"""
         game = self.get_object()
         player, created = Player.objects.get_or_create(user=request.user)
         
         try:
             player_game = PlayerGame.objects.get(game=game, player=player)
             
-            # Cannot leave during an active hand if still active
-            if game.status == 'PLAYING' and player_game.is_active:
+            # Can only leave if already cashed out
+            if not player_game.cashed_out:
                 return Response(
-                    {'error': 'Cannot leave during an active hand. Fold first.'},
+                    {'error': 'You must cash out before leaving the table'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Cash out chips
-            player.balance += player_game.stack
+            # Transfer remaining stack to player balance and remove from table
+            leave_amount = player_game.stack
+            player.balance += leave_amount
             player.save()
             
-            # Remove player from game
+            logger.info(f"💸 Player {request.user.username} left table with ${leave_amount} from game {game.id}")
+            
+            # Remove player from game completely
             player_game.delete()
             
-            # If no players left, end the game
-            if PlayerGame.objects.filter(game=game).count() == 0:
+            # Broadcast update to remove player from UI
+            GameService.broadcast_game_update(game.id)
+            
+            # Check if we need to end the game
+            remaining_players = PlayerGame.objects.filter(game=game)
+            active_players = remaining_players.filter(is_active=True, cashed_out=False)
+            
+            if remaining_players.count() == 0:
                 game.status = 'FINISHED'
                 game.save()
+                logger.info(f"🏁 Game {game.id} ended - no players remaining")
+            elif active_players.count() == 1:
+                # Only one active player left, they win by default
+                last_player = active_players.first()
+                if last_player and game.pot > 0:
+                    last_player.stack += game.pot
+                    last_player.save()
+                    game.pot = 0
+                    game.status = 'FINISHED'
+                    game.save()
+                    logger.info(f"🏁 Game {game.id} ended - only one active player remaining")
             
-            return Response({'success': True})
+            return Response({
+                'success': True, 
+                'left_with': str(leave_amount),
+                'new_balance': str(player.balance)
+            })
+            
         except PlayerGame.DoesNotExist:
+            logger.warning(f"Player {request.user.username} tried to leave but is not at table")
             return Response(
                 {'error': 'You are not at this table'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -311,8 +362,8 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             
             logger.info(f"🟢 Player {request.user.username} marked ready for next hand in game {game.id}")
             
-            # Check if all active players are ready
-            active_players = PlayerGame.objects.filter(game=game, stack__gt=0)
+            # Check if all active players are ready (excluding cashed out players)
+            active_players = PlayerGame.objects.filter(game=game, stack__gt=0, cashed_out=False)
             ready_players = active_players.filter(ready_for_next_hand=True)
             
             logger.info(f"📊 Ready status: {ready_players.count()}/{active_players.count()} players ready")
@@ -337,6 +388,7 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'success': True, 'ready_count': ready_players.count(), 'total_count': active_players.count()})
             
         except PlayerGame.DoesNotExist:
+            logger.warning(f"Player {request.user.username} tried to ready but is not at table")
             return Response(
                 {'error': 'You are not at this table'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -344,60 +396,150 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=True, methods=['post'])
     def cash_out(self, request, pk=None):
-        """Cash out from game and leave table"""
+        """Cash out from active play (stay at table but become inactive)"""
         game = self.get_object()
         player, created = Player.objects.get_or_create(user=request.user)
         
         try:
             player_game = PlayerGame.objects.get(game=game, player=player)
             
-            # Cannot cash out during an active hand if still active
-            if game.status == 'PLAYING' and player_game.is_active:
+            # Cannot cash out if already cashed out
+            if player_game.cashed_out:
+                return Response(
+                    {'error': 'You have already cashed out'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Cannot cash out during an active betting round (but allow during WAITING_FOR_PLAYERS phase)
+            if game.status == 'PLAYING' and player_game.is_active and game.phase not in ['WAITING_FOR_PLAYERS', 'FINISHED']:
                 return Response(
                     {'error': 'Cannot cash out during an active hand. Wait for hand to end or fold first.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Cash out chips to player balance
-            cash_out_amount = player_game.stack
-            player.balance += cash_out_amount
-            player.save()
+            # Mark player as cashed out and inactive (but keep them at table)
+            player_game.cashed_out = True
+            player_game.is_active = False
+            player_game.save()
             
-            logger.info(f"💰 Player {request.user.username} cashed out ${cash_out_amount} from game {game.id}")
+            logger.info(f"💰 Player {request.user.username} cashed out (staying at table) with ${player_game.stack} from game {game.id}")
             
-            # Remove player from game
-            player_game.delete()
-            
-            # Broadcast update to remove player from UI
+            # Broadcast update to show player as cashed out
             GameService.broadcast_game_update(game.id)
             
-            # If no players left, end the game
-            remaining_players = PlayerGame.objects.filter(game=game).count()
-            if remaining_players == 0:
-                game.status = 'FINISHED'
-                game.save()
-                logger.info(f"🏁 Game {game.id} ended - no players remaining")
-            elif remaining_players == 1:
-                # Only one player left, they win by default
-                last_player = PlayerGame.objects.filter(game=game).first()
-                if last_player:
-                    # Award any remaining pot to the last player
-                    if game.pot > 0:
-                        last_player.stack += game.pot
-                        last_player.save()
-                        game.pot = 0
-                    
+            # Check if we need to end the game (only active, non-cashed-out players count)
+            active_players = PlayerGame.objects.filter(game=game, is_active=True, cashed_out=False)
+            
+            if active_players.count() == 1:
+                # Only one active player left, they win by default
+                last_player = active_players.first()
+                if last_player and game.pot > 0:
+                    last_player.stack += game.pot
+                    last_player.save()
+                    game.pot = 0
                     game.status = 'FINISHED'
                     game.save()
-                    logger.info(f"🏁 Game {game.id} ended - only one player remaining")
+                    logger.info(f"🏁 Game {game.id} ended - only one active player remaining")
+            elif active_players.count() == 0:
+                game.status = 'FINISHED' 
+                game.save()
+                logger.info(f"🏁 Game {game.id} ended - no active players remaining")
             
             return Response({
                 'success': True, 
-                'cashed_out': str(cash_out_amount),
+                'message': 'Cashed out successfully. You can buy back in or leave the table.',
+                'stack': str(player_game.stack)
+            })
+            
+        except PlayerGame.DoesNotExist:
+            logger.warning(f"Player {request.user.username} tried to cash out but is not at table")
+            return Response(
+                {'error': 'You are not at this table'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def buy_back_in(self, request, pk=None):
+        """Buy back into the game after cashing out"""
+        game = self.get_object()
+        player, created = Player.objects.get_or_create(user=request.user)
+        
+        try:
+            player_game = PlayerGame.objects.get(game=game, player=player)
+            
+            # Can only buy back in if currently cashed out
+            if not player_game.cashed_out:
+                return Response(
+                    {'error': 'You have not cashed out, so you cannot buy back in'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get buy-in amount from request and convert to Decimal
+            try:
+                buy_in_raw = request.data.get('amount')
+                if buy_in_raw is None:
+                    return Response(
+                        {'error': 'Buy-in amount is required'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                buy_in = Decimal(str(buy_in_raw))
+            except (ValueError, TypeError, InvalidOperation):
+                return Response(
+                    {'error': 'Invalid buy-in amount'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate buy-in amount against table limits
+            table = game.table
+            if buy_in < table.min_buy_in:
+                return Response(
+                    {'error': f'Buy-in must be at least ${table.min_buy_in}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if buy_in > table.max_buy_in:
+                return Response(
+                    {'error': f'Buy-in cannot exceed ${table.max_buy_in}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if player has sufficient balance
+            if buy_in > player.balance:
+                return Response(
+                    {'error': 'Insufficient balance'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Cannot buy back in during an active hand (except WAITING_FOR_PLAYERS)
+            if game.status == 'PLAYING' and game.phase not in ['WAITING_FOR_PLAYERS', 'FINISHED']:
+                return Response(
+                    {'error': 'Cannot buy back in during an active hand. Wait for hand to end.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Process the buy-back-in
+            player.balance -= buy_in
+            player.save()
+            
+            player_game.stack += buy_in  # Add to existing stack
+            player_game.cashed_out = False
+            player_game.is_active = True
+            player_game.save()
+            
+            logger.info(f"🔄 Player {request.user.username} bought back in with ${buy_in} to game {game.id} (total stack: ${player_game.stack})")
+            
+            # Broadcast update to show player as active again
+            GameService.broadcast_game_update(game.id)
+            
+            return Response({
+                'success': True,
+                'buy_in_amount': str(buy_in),
+                'total_stack': str(player_game.stack),
                 'new_balance': str(player.balance)
             })
             
         except PlayerGame.DoesNotExist:
+            logger.warning(f"Player {request.user.username} tried to buy back in but is not at table")
             return Response(
                 {'error': 'You are not at this table'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -474,59 +616,6 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'Invalid amount'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-    @api_view(['POST'])
-    def register_user(request):
-        """Register a new user"""
-        permission_classes = [AllowAny]
-        username = request.data.get('username')
-        email = request.data.get('email')
-        password = request.data.get('password')
-        
-        # Validate required fields
-        if not username or not email or not password:
-            return Response(
-                {'error': 'Please provide username, email, and password'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if username already exists
-        if User.objects.filter(username=username).exists():
-            return Response(
-                {'username': ['This username is already taken']},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if email already exists
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {'email': ['This email is already registered']},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Create user and player profile
-        try:
-            with transaction.atomic():
-                user = User.objects.create_user(
-                    username=username,
-                    email=email,
-                    password=password
-                )
-                
-                # Create player profile with initial balance
-                from .models import Player
-                Player.objects.create(user=user, balance=1000)  # Give new users $1000 to start
-            
-            return Response(
-                {'message': 'User registered successfully'},
-                status=status.HTTP_201_CREATED
-            )
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register_user(request):

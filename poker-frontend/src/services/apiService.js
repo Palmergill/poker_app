@@ -132,7 +132,7 @@ const gameService = {
   getGame: (id) => apiClient.get(`/games/${id}/`),
   // Start a poker game
   startGame: (id) => apiClient.post(`/games/${id}/start/`),
-  // Leave a poker game
+  // Leave a poker table completely (only works if already cashed out)
   leaveGame: (id) => apiClient.post(`/games/${id}/leave/`),
   // Take a poker action (fold, check, call, bet, raise)
   takeAction: (id, actionType, amount = 0) =>
@@ -141,8 +141,11 @@ const gameService = {
   // Set player ready for next hand
   setPlayerReady: (id) => apiClient.post(`/games/${id}/ready/`),
   
-  // Cash out from game and leave
+  // Cash out from active play (stay at table but become inactive)
   cashOut: (id) => apiClient.post(`/games/${id}/cash_out/`),
+  
+  // Buy back into the game after cashing out
+  buyBackIn: (id, amount) => apiClient.post(`/games/${id}/buy_back_in/`, { amount }),
   
   // Reset game state when it gets corrupted
   resetGameState: (id) => apiClient.post(`/games/${id}/reset_game_state/`),

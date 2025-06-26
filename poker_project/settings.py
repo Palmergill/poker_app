@@ -203,7 +203,7 @@ CORS_ALLOW_HEADERS = [
     'sec-websocket-version',
 ]
 
-# Logging configuration for debugging WebSocket issues
+# Comprehensive logging configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -220,6 +220,10 @@ LOGGING = {
             'format': '[{asctime}] {levelname} {name}: {message}',
             'style': '{',
         },
+        'detailed': {
+            'format': '[{asctime}] {levelname} {name} {pathname}:{lineno} {funcName}() - {message}',
+            'style': '{',
+        },
     },
     'handlers': {
         'console': {
@@ -231,6 +235,27 @@ LOGGING = {
             'filename': 'debug.log',
             'formatter': 'verbose',
         },
+        'game_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'game.log',
+            'formatter': 'detailed',
+        },
+        'api_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'api.log',
+            'formatter': 'detailed',
+        },
+        'websocket_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'websocket.log',
+            'formatter': 'detailed',
+        },
+        'error_file': {
+            'class': 'logging.FileHandler',
+            'filename': 'error.log',
+            'formatter': 'detailed',
+            'level': 'ERROR',
+        },
     },
     'loggers': {
         'poker_api': {
@@ -238,10 +263,44 @@ LOGGING = {
             'level': 'INFO',
             'propagate': True,
         },
-        'channels': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': True,
+        'poker_api.services': {
+            'handlers': ['game_file', 'console'],
+            'level': 'DEBUG',
+            'propagate': False,
         },
+        'poker_api.consumers': {
+            'handlers': ['websocket_file', 'console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'poker_api.views': {
+            'handlers': ['api_file', 'console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'poker_api.utils': {
+            'handlers': ['file', 'console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'channels': {
+            'handlers': ['websocket_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['error_file', 'console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'django.db.backends': {
+            'handlers': ['file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+    'root': {
+        'handlers': ['console', 'error_file'],
+        'level': 'INFO',
     },
 }

@@ -16,12 +16,28 @@ const PokerTable = () => {
   const [handHistory, setHandHistory] = useState([]); // Store last 5 hand results
   const [showHandResults, setShowHandResults] = useState(false); // Show hand results popup
   const [currentHandResult, setCurrentHandResult] = useState(null); // Current hand result data
-  const [actionType, setActionType] = useState("CHECK");
+  const [actionType] = useState("CHECK");
   const [betAmount, setBetAmount] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [buyInAmount, setBuyInAmount] = useState(0); // For buy back in
+  const [showBuyInDialog, setShowBuyInDialog] = useState(false); // Show buy in dialog
   const socketRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const messageTimeoutRef = useRef(null);
+
+  // Get current user information from localStorage
+  const getCurrentUserInfo = () => {
+    try {
+      const userStr = localStorage.getItem("user");
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        return user;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
 
   useEffect(() => {
     // Fetch initial game data and hand history
@@ -99,34 +115,48 @@ const PokerTable = () => {
             updatedGame.winner_info && 
             !showHandResults) {
           
-          console.log('🔄 Restoring hand results popup after browser refresh');
+          // Check if current player is already ready - if so, don't restore popup
+          const currentUserInfo = getCurrentUserInfo();
+          const currentPlayerGame = updatedGame.players?.find(player => 
+            currentUserInfo && (
+              currentUserInfo.id === player.player.user.id || 
+              currentUserInfo.username === player.player.user.username
+            )
+          );
+          const currentPlayerIsReady = currentPlayerGame?.ready_for_next_hand || false;
           
-          // Handle winner_info which comes from API as already parsed object
-          let winnerInfo;
-          if (typeof updatedGame.winner_info === 'string') {
-            try {
-              winnerInfo = JSON.parse(updatedGame.winner_info);
-            } catch (e) {
-              console.warn('Failed to parse winner_info as JSON:', e);
-              winnerInfo = {};
+          if (!currentPlayerIsReady) {
+            console.log('🔄 Restoring hand results popup after browser refresh');
+            
+            // Handle winner_info which comes from API as already parsed object
+            let winnerInfo;
+            if (typeof updatedGame.winner_info === 'string') {
+              try {
+                winnerInfo = JSON.parse(updatedGame.winner_info);
+              } catch (e) {
+                console.warn('Failed to parse winner_info as JSON:', e);
+                winnerInfo = {};
+              }
+            } else {
+              // Already an object
+              winnerInfo = updatedGame.winner_info || {};
             }
+            
+            const restoredHandResult = {
+              timestamp: Date.now(),
+              winners: winnerInfo.winners || [],
+              potAmount: winnerInfo.pot_amount || 0,
+              type: winnerInfo.type || 'Unknown',
+              handNumber: updatedGame.hand_count || 1,
+              allPlayers: updatedGame.players || []
+            };
+            
+            setCurrentHandResult(restoredHandResult);
+            setShowHandResults(true);
+            console.log('✅ Hand results popup restored');
           } else {
-            // Already an object
-            winnerInfo = updatedGame.winner_info || {};
+            console.log('🚫 Current player is ready - not restoring popup');
           }
-          
-          const restoredHandResult = {
-            timestamp: Date.now(),
-            winners: winnerInfo.winners || [],
-            potAmount: winnerInfo.pot_amount || 0,
-            type: winnerInfo.type || 'Unknown',
-            handNumber: updatedGame.hand_count || 1,
-            allPlayers: updatedGame.players || []
-          };
-          
-          setCurrentHandResult(restoredHandResult);
-          setShowHandResults(true);
-          console.log('✅ Hand results popup restored');
         }
         
         // Fetch updated hand history
@@ -230,6 +260,16 @@ const PokerTable = () => {
               currentShowingPopup: showHandResults
             });
             
+            // Check if current player is already ready - if so, don't show popup
+            const currentUserInfo = getCurrentUserInfo();
+            const currentPlayerGame = updatedGame.players?.find(player => 
+              currentUserInfo && (
+                currentUserInfo.id === player.player.user.id || 
+                currentUserInfo.username === player.player.user.username
+              )
+            );
+            const currentPlayerIsReady = currentPlayerGame?.ready_for_next_hand || false;
+            
             const winnerInfo = updatedGame.winner_info;
             
             const newHistoryEntry = {
@@ -241,8 +281,8 @@ const PokerTable = () => {
               allPlayers: updatedGame.players || [] // Store all players for money change tracking
             };
             
-            // Only show popup if we don't already have one showing for this hand
-            if (!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) {
+            // Only show popup if we don't already have one showing for this hand AND current player is not ready
+            if ((!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) && !currentPlayerIsReady) {
               console.log('✅ Showing hand results popup for hand #', newHistoryEntry.handNumber);
               setCurrentHandResult(newHistoryEntry);
               setShowHandResults(true);
@@ -266,7 +306,11 @@ const PokerTable = () => {
                   });
                 });
             } else {
-              console.log('⏭️ Skipping popup - already showing for this hand');
+              if (currentPlayerIsReady) {
+                console.log('🚫 Current player is ready - not showing popup via WebSocket');
+              } else {
+                console.log('⏭️ Skipping popup - already showing for this hand');
+              }
             }
           }
           
@@ -325,26 +369,38 @@ const PokerTable = () => {
     }
   };
 
-  // Leave the poker game with confirmation dialog
-  const handleLeaveGame = async () => {
-    // Show confirmation dialog if game is in progress
-    if (game.status === "PLAYING") {
-      const confirmed = window.confirm(
-        "Are you sure you want to leave? You are currently in an active game and may lose your seat and chips."
-      );
-      if (!confirmed) {
-        return;
-      }
+  // Leave the poker table completely (only works if already cashed out)
+  const handleLeaveTable = async () => {
+    const currentPlayer = findCurrentPlayer();
+    if (!currentPlayer) {
+      showMessage("You are not at this table", "error");
+      return;
+    }
+
+    // Can only leave if already cashed out
+    if (!currentPlayer.cashed_out) {
+      showMessage("You must cash out before leaving the table", "error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to leave the table? You will take your remaining $${currentPlayer.stack} chips with you.`
+    );
+    
+    if (!confirmed) {
+      return;
     }
 
     try {
-      await gameService.leaveGame(id);
-      navigate("/tables");
+      const response = await gameService.leaveGame(id);
+      showMessage(`🚪 Left table with $${response.data.left_with}!`, "success", 2000);
+      setTimeout(() => {
+        navigate("/tables");
+      }, 2000);
     } catch (err) {
-      showMessage(err.response?.data?.error || "Failed to leave game", "error");
+      showMessage(err.response?.data?.error || "Failed to leave table", "error");
       
       // Even if the backend call fails, still navigate away after showing error
-      // This ensures the player can always leave the UI even if there's a server issue
       setTimeout(() => {
         navigate("/tables");
       }, 2000);
@@ -395,10 +451,21 @@ const PokerTable = () => {
     }
   };
 
-  // Handle cash out from game
+  // Handle cash out from active play (stay at table but become inactive)
   const handleCashOut = async () => {
+    const currentPlayer = findCurrentPlayer();
+    if (!currentPlayer) {
+      showMessage("You are not at this table", "error");
+      return;
+    }
+
+    if (currentPlayer.cashed_out) {
+      showMessage("You have already cashed out", "error");
+      return;
+    }
+
     const confirmed = window.confirm(
-      "Are you sure you want to cash out and leave the game? Your remaining chips will be deposited to your account."
+      "Are you sure you want to cash out? You will stay at the table as a spectator and can buy back in later or leave completely."
     );
     
     if (!confirmed) {
@@ -409,14 +476,52 @@ const PokerTable = () => {
       await gameService.cashOut(id);
       setShowHandResults(false);
       setCurrentHandResult(null);
-      showMessage("💰 Cashed out successfully! Redirecting...", "success", 2000);
-      
-      // Redirect to tables after a short delay
-      setTimeout(() => {
-        navigate("/tables");
-      }, 2000);
+      showMessage("💰 Cashed out successfully! You can now buy back in or leave the table.", "success", 3000);
     } catch (err) {
       showMessage(`Failed to cash out: ${err.response?.data?.error || err.message}`, "error");
+    }
+  };
+
+  // Handle buy back in after cashing out
+  const handleBuyBackIn = async () => {
+    const currentPlayer = findCurrentPlayer();
+    if (!currentPlayer) {
+      showMessage("You are not at this table", "error");
+      return;
+    }
+
+    if (!currentPlayer.cashed_out) {
+      showMessage("You have not cashed out, so you cannot buy back in", "error");
+      return;
+    }
+
+    if (!buyInAmount || buyInAmount <= 0) {
+      showMessage("Please enter a valid buy-in amount", "error");
+      return;
+    }
+
+    // Validate buy-in amount against table limits
+    const table = game.table;
+    if (buyInAmount < table.min_buy_in) {
+      showMessage(`Buy-in must be at least $${table.min_buy_in}`, "error");
+      return;
+    }
+    if (buyInAmount > table.max_buy_in) {
+      showMessage(`Buy-in cannot exceed $${table.max_buy_in}`, "error");
+      return;
+    }
+
+    try {
+      const response = await gameService.buyBackIn(id, buyInAmount);
+      setShowBuyInDialog(false);
+      setBuyInAmount(0);
+      showMessage(
+        `✅ Bought back in with $${response.data.buy_in_amount}! Total stack: $${response.data.total_stack}`,
+        "success",
+        3000
+      );
+    } catch (err) {
+      showMessage(`Failed to buy back in: ${err.response?.data?.error || err.message}`, "error");
     }
   };
 
@@ -458,21 +563,6 @@ const PokerTable = () => {
   if (!game && !loading) {
     return <div className="error">Game not found</div>;
   }
-
-  // Get current user information from localStorage
-  const getCurrentUserInfo = () => {
-    try {
-      const userStr = localStorage.getItem("user");
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        return user;
-      }
-
-      return null;
-    } catch (e) {
-      return null;
-    }
-  };
 
   // Find the current player in the game
   const findCurrentPlayer = () => {
@@ -615,7 +705,6 @@ const PokerTable = () => {
     }
 
     const currentUser = getCurrentUserInfo();
-    const currentPlayer = findCurrentPlayer();
 
     return game.players.map((player) => {
       const isDealer = player.seat_position === game.dealer_position;
@@ -645,6 +734,9 @@ const PokerTable = () => {
           playerCards = player.cards.cards;
         }
       }
+
+      // Determine player status for styling
+      const playerStatus = player.cashed_out ? 'cashed-out' : (player.is_active ? 'active' : 'inactive');
 
       let style = {};
       
@@ -696,15 +788,19 @@ const PokerTable = () => {
           key={player.id}
           className={`player-position ${isDealer ? "dealer" : ""} ${
             isTurn ? "active-turn" : ""
-          } ${isCurrentUser ? "current-user" : "other-player"}`}
+          } ${isCurrentUser ? "current-user" : "other-player"} ${playerStatus}`}
           style={style}
         >
           <div className="player-info">
             <div className="player-name">
               {player.player.user.username}
               {isCurrentUser && <span className="you-indicator"> (You)</span>}
+              {player.cashed_out && <span className="status-indicator cashed-out"> (Spectator)</span>}
             </div>
-            <div className="player-stack">${player.stack}</div>
+            <div className="player-stack">
+              ${player.stack}
+              {player.cashed_out && <span className="stack-note"> (Cashed Out)</span>}
+            </div>
 
             {player.current_bet > 0 && (
               <div className="player-bet">${player.current_bet}</div>
@@ -747,7 +843,8 @@ const PokerTable = () => {
               </div>
             )}
 
-            {!player.is_active && <div className="player-status">Folded</div>}
+            {!player.is_active && !player.cashed_out && <div className="player-status">Folded</div>}
+            {player.cashed_out && <div className="player-status cashed-out-status">Spectating</div>}
           </div>
         </div>
       );
@@ -855,32 +952,64 @@ const PokerTable = () => {
   };
 
   // Render game information and controls
-  const renderGameInfo = () => (
-    <div className="game-info-card">
-      <h3>{game.table.name}</h3>
-      <div className="game-status-compact">
-        <div><strong>Status:</strong> {game.status}</div>
-        {game.phase && <div><strong>Phase:</strong> {game.phase}</div>}
-        {game.current_bet > 0 && (
-          <div><strong>Current Bet:</strong> ${game.current_bet}</div>
-        )}
-      </div>
+  const renderGameInfo = () => {
+    const currentPlayer = findCurrentPlayer();
+    const isCashedOut = currentPlayer && currentPlayer.cashed_out;
+    
+    return (
+      <div className="game-info-card">
+        <h3>{game.table.name}</h3>
+        <div className="game-status-compact">
+          <div><strong>Status:</strong> {game.status}</div>
+          {game.phase && <div><strong>Phase:</strong> {game.phase}</div>}
+          {game.current_bet > 0 && (
+            <div><strong>Current Bet:</strong> ${game.current_bet}</div>
+          )}
+        </div>
 
-      <div className="game-actions-compact">
-        {game.status === "WAITING" && (
-          <button onClick={handleStartGame} className="compact-btn">Start Game</button>
-        )}
-        {game.status === "PLAYING" && (
-          <button onClick={handleRefreshGame} className="compact-btn refresh-button">
-            Refresh
-          </button>
-        )}
-        <button onClick={handleLeaveGame} className="compact-btn leave-btn" title="Leave table (always available)">
-          Leave Table
-        </button>
+        <div className="game-actions-compact">
+          {game.status === "WAITING" && (
+            <button onClick={handleStartGame} className="compact-btn">Start Game</button>
+          )}
+          {game.status === "PLAYING" && (
+            <button onClick={handleRefreshGame} className="compact-btn refresh-button">
+              Refresh
+            </button>
+          )}
+          
+          {/* Show different buttons based on player status */}
+          {currentPlayer && !isCashedOut && (
+            <button 
+              onClick={handleCashOut} 
+              className="compact-btn cash-out-btn" 
+              title="Cash out and become a spectator (you can buy back in later)"
+            >
+              💰 Cash Out
+            </button>
+          )}
+          
+          {currentPlayer && isCashedOut && (
+            <>
+              <button 
+                onClick={() => setShowBuyInDialog(true)} 
+                className="compact-btn buy-in-btn" 
+                title="Buy back into the game"
+              >
+                💵 Buy Back In
+              </button>
+              <button 
+                onClick={handleLeaveTable} 
+                className="compact-btn leave-btn" 
+                title="Leave the table completely with your chips"
+              >
+                🚪 Leave Table
+              </button>
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // Render community cards on the table
   const renderCommunityCards = () => {
@@ -1055,7 +1184,7 @@ const PokerTable = () => {
                 className="cash-out-btn"
                 onClick={handleCashOut}
               >
-                💰 Cash Out & Leave
+                💰 Cash Out
               </button>
             </div>
             
@@ -1088,6 +1217,90 @@ const PokerTable = () => {
     );
   };
 
+  // Render buy back in dialog
+  const renderBuyInDialog = () => {
+    if (!showBuyInDialog) return null;
+
+    const table = game.table;
+
+    return (
+      <div className="buy-in-overlay">
+        <div className="buy-in-dialog">
+          <div className="buy-in-header">
+            <h2>💵 Buy Back In</h2>
+          </div>
+          
+          <div className="buy-in-content">
+            <p>Enter the amount you want to buy back in with:</p>
+            
+            <div className="buy-in-limits">
+              <div>Min: ${table.min_buy_in}</div>
+              <div>Max: ${table.max_buy_in}</div>
+            </div>
+            
+            <div className="buy-in-input-group">
+              <label htmlFor="buyInAmount">Amount:</label>
+              <input
+                id="buyInAmount"
+                type="number"
+                min={table.min_buy_in}
+                max={table.max_buy_in}
+                step="0.01"
+                value={buyInAmount}
+                onChange={(e) => setBuyInAmount(parseFloat(e.target.value) || 0)}
+                placeholder={`Enter amount (min: $${table.min_buy_in})`}
+                autoFocus
+              />
+            </div>
+            
+            <div className="buy-in-buttons">
+              <button 
+                className="buy-in-confirm-btn"
+                onClick={handleBuyBackIn}
+                disabled={!buyInAmount || buyInAmount < table.min_buy_in || buyInAmount > table.max_buy_in}
+              >
+                💵 Buy In for ${buyInAmount || 0}
+              </button>
+              <button 
+                className="buy-in-cancel-btn"
+                onClick={() => {
+                  setShowBuyInDialog(false);
+                  setBuyInAmount(0);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            
+            <div className="buy-in-quick-amounts">
+              <p>Quick amounts:</p>
+              <div className="quick-amount-buttons">
+                <button 
+                  className="quick-amount-btn"
+                  onClick={() => setBuyInAmount(table.min_buy_in)}
+                >
+                  ${table.min_buy_in}
+                </button>
+                <button 
+                  className="quick-amount-btn"
+                  onClick={() => setBuyInAmount(table.min_buy_in * 2)}
+                >
+                  ${table.min_buy_in * 2}
+                </button>
+                <button 
+                  className="quick-amount-btn"
+                  onClick={() => setBuyInAmount(table.max_buy_in)}
+                >
+                  ${table.max_buy_in}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="poker-game-container">
       {renderConnectionStatus()}
@@ -1104,6 +1317,7 @@ const PokerTable = () => {
       {renderGameLogs()}
       {renderPopupMessage()}
       {renderHandResultsPopup()}
+      {renderBuyInDialog()}
       {error && <div className="error-message">{error}</div>}
     </div>
   );

@@ -41,10 +41,11 @@ class PokerTableSerializer(serializers.ModelSerializer):
 class PlayerGameSerializer(serializers.ModelSerializer):
     player = PlayerSerializer(read_only=True)
     cards = serializers.SerializerMethodField()
+    status = serializers.ReadOnlyField()
     
     class Meta:
         model = PlayerGame
-        fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand']
+        fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cashed_out', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand', 'status']
     
     def get_cards(self, obj):
         # Always send cards data and let frontend handle visibility
@@ -63,7 +64,11 @@ class GameActionSerializer(serializers.ModelSerializer):
         fields = ['id', 'player', 'action_type', 'amount', 'timestamp']
     
     def get_player(self, obj):
-        return obj.player_game.player.user.username
+        try:
+            return obj.player_game.player.user.username
+        except (AttributeError, ValueError) as e:
+            # Handle case where player_game relationship is broken
+            return "Unknown Player"
 
 class GameSerializer(serializers.ModelSerializer):
     table = PokerTableSerializer(read_only=True)
@@ -87,12 +92,19 @@ class GameSerializer(serializers.ModelSerializer):
         return serializer.data
     
     def get_actions(self, obj):
-        # Get last 10 actions
-        actions = GameAction.objects.filter(
-            player_game__game=obj
-        ).order_by('-timestamp')[:10]
-        serializer = GameActionSerializer(actions, many=True)
-        return serializer.data
+        try:
+            # Get last 10 actions
+            actions = GameAction.objects.filter(
+                player_game__game=obj
+            ).order_by('-timestamp')[:10]
+            serializer = GameActionSerializer(actions, many=True)
+            return serializer.data
+        except Exception as e:
+            # Log the error and return empty list instead of crashing
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error serializing actions for game {obj.id}: {e}")
+            return []
     
     def get_winner_info(self, obj):
         return obj.get_winner_info()

@@ -424,15 +424,25 @@ def monitor_django_output(django_process, output_queue):
     except Exception as e:
         output_queue.put(f"Error reading Django output: {e}")
 
-def display_logs(output_queue):
+def display_logs(output_queue, errors_only=False):
     """Display Django logs from queue."""
-    print("\n🔍 Following Django logs (press Ctrl+C to stop):")
+    if errors_only:
+        print("\n🚨 Following Django error logs only (press Ctrl+C to stop):")
+    else:
+        print("\n🔍 Following Django logs (press Ctrl+C to stop):")
     print("=" * 60)
     try:
         while True:
             try:
                 line = output_queue.get(timeout=1)
-                print(f"[DJANGO] {line}")
+                
+                if errors_only:
+                    # Only show lines that contain error indicators
+                    line_lower = line.lower()
+                    if any(keyword in line_lower for keyword in ['error', 'exception', 'traceback', 'critical', 'failed', '❌']):
+                        print(f"[DJANGO ERROR] {line}")
+                else:
+                    print(f"[DJANGO] {line}")
             except queue.Empty:
                 continue
     except KeyboardInterrupt:
@@ -446,6 +456,8 @@ def main():
                        help='Automatically clean up existing services without prompting')
     parser.add_argument('--skip-cleanup', action='store_true',
                        help='Skip cleanup of existing services')
+    parser.add_argument('--errors-only', action='store_true',
+                       help='Show only error logs, suppress info messages')
     args = parser.parse_args()
     
     print("🎰 Poker App Startup Script")
@@ -552,7 +564,7 @@ def main():
     
     try:
         # Start displaying logs
-        display_logs(output_queue)
+        display_logs(output_queue, errors_only=args.errors_only)
     except KeyboardInterrupt:
         cleanup_processes()
     except Exception as e:

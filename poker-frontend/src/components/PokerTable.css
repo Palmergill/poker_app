@@ -1030,3 +1030,273 @@ button:disabled {
     transform: scale(1) translateY(0);
   }
 }
+
+/* Player Status Styling */
+.player-position.cashed-out {
+  opacity: 0.7;
+  filter: grayscale(30%);
+}
+
+.player-position.cashed-out .player-info {
+  border: 2px dashed #ffa500;
+  border-radius: 8px;
+  padding: 8px;
+  background-color: rgba(255, 165, 0, 0.1);
+}
+
+.status-indicator.cashed-out {
+  color: #ff8c00;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.stack-note {
+  color: #ff8c00;
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.player-status.cashed-out-status {
+  background-color: #ffe4b5;
+  color: #ff8c00;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: bold;
+  margin-top: 4px;
+}
+
+/* Updated Button Styles */
+.cash-out-btn {
+  background: linear-gradient(135deg, #ff8c00 0%, #ff7f00 100%);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(255, 140, 0, 0.3);
+}
+
+.cash-out-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 140, 0, 0.5);
+  background: linear-gradient(135deg, #ff7f00 0%, #ff6b00 100%);
+}
+
+.buy-in-btn {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+}
+
+.buy-in-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.5);
+  background: linear-gradient(135deg, #20c997 0%, #17a2b8 100%);
+}
+
+.leave-btn {
+  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+.leave-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 53, 69, 0.5);
+  background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
+}
+
+/* Buy In Dialog Styles */
+.buy-in-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 3000;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.buy-in-dialog {
+  background-color: white;
+  border-radius: 16px;
+  max-width: 450px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  animation: popupSlide 0.4s ease-out;
+}
+
+.buy-in-header {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  padding: 20px;
+  border-radius: 16px 16px 0 0;
+  text-align: center;
+}
+
+.buy-in-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.buy-in-content {
+  padding: 25px;
+}
+
+.buy-in-content p {
+  text-align: center;
+  color: #495057;
+  margin-bottom: 20px;
+  font-size: 16px;
+}
+
+.buy-in-limits {
+  display: flex;
+  justify-content: space-between;
+  background-color: #f8f9fa;
+  padding: 10px 15px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  color: #6c757d;
+}
+
+.buy-in-input-group {
+  margin-bottom: 20px;
+}
+
+.buy-in-input-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #495057;
+}
+
+.buy-in-input-group input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #ced4da;
+  border-radius: 8px;
+  font-size: 16px;
+  transition: border-color 0.3s ease;
+  box-sizing: border-box;
+}
+
+.buy-in-input-group input:focus {
+  outline: none;
+  border-color: #28a745;
+  box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
+}
+
+.buy-in-buttons {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.buy-in-confirm-btn {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
+  flex: 2;
+}
+
+.buy-in-confirm-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(40, 167, 69, 0.6);
+  background: linear-gradient(135deg, #20c997 0%, #17a2b8 100%);
+}
+
+.buy-in-confirm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.buy-in-cancel-btn {
+  background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: bold;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(108, 117, 125, 0.4);
+  flex: 1;
+}
+
+.buy-in-cancel-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(108, 117, 125, 0.6);
+  background: linear-gradient(135deg, #495057 0%, #343a40 100%);
+}
+
+.buy-in-quick-amounts {
+  text-align: center;
+}
+
+.buy-in-quick-amounts p {
+  margin-bottom: 12px;
+  font-size: 14px;
+  color: #6c757d;
+}
+
+.quick-amount-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.quick-amount-btn {
+  background-color: #e9ecef;
+  border: 2px solid #ced4da;
+  color: #495057;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.quick-amount-btn:hover {
+  background-color: #28a745;
+  border-color: #28a745;
+  color: white;
+  transform: translateY(-1px);
+}
