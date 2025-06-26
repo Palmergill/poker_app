@@ -90,6 +90,7 @@ class PokerTableViewSet(viewsets.ModelViewSet):
                     game=game,
                     seat_position=seat,
                     stack=buy_in,
+                    starting_stack=buy_in,  # Record initial stack for win/loss tracking
                     is_active=True
                 )
                 
@@ -245,6 +246,30 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'error': f'Failed to reset game state: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['get'])
+    def summary(self, request, pk=None):
+        """Get game summary if available"""
+        game = self.get_object()
+        
+        # Check if user participated in this game
+        if not PlayerGame.objects.filter(game=game, player__user=request.user).exists():
+            return Response(
+                {'error': 'You did not participate in this game'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        summary_data = game.get_game_summary()
+        if not summary_data:
+            return Response(
+                {'error': 'Game summary not available yet'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response({
+            'game_summary': summary_data,
+            'game_status': game.status
+        })
+
+    @action(detail=True, methods=['get'])
     def debug_state(self, request, pk=None):
         """Get detailed game state for debugging"""
         game = self.get_object()
@@ -300,7 +325,15 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             player.balance += leave_amount
             player.save()
             
+            # Record final stack if not already recorded (in case player leaves without cashing out first)
+            if player_game.final_stack is None:
+                player_game.final_stack = player_game.stack
+                player_game.save()
+            
             logger.info(f"💸 Player {request.user.username} left table with ${leave_amount} from game {game.id}")
+            
+            # Store player data for potential game summary before deletion
+            all_players_before_delete = list(PlayerGame.objects.filter(game=game))
             
             # Remove player from game completely
             player_game.delete()
@@ -313,8 +346,17 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             active_players = remaining_players.filter(is_active=True, cashed_out=False)
             
             if remaining_players.count() == 0:
-                game.status = 'FINISHED'
-                game.save()
+                # All players left - check if all had final_stack recorded
+                players_with_final_stack = [pg for pg in all_players_before_delete if pg.final_stack is not None]
+                if len(players_with_final_stack) == len(all_players_before_delete):
+                    # Generate game summary before finishing
+                    summary = game.generate_game_summary()
+                    logger.info(f"📊 Game summary generated for completed game {game.id}")
+                    # Broadcast game summary notification (even though no players are left, other systems might need it)
+                    GameService.broadcast_game_summary_available(game.id, summary)
+                else:
+                    game.status = 'FINISHED'
+                    game.save()
                 logger.info(f"🏁 Game {game.id} ended - no players remaining")
             elif active_players.count() == 1:
                 # Only one active player left, they win by default
@@ -420,12 +462,10 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             # Mark player as cashed out and inactive (but keep them at table)
             player_game.cashed_out = True
             player_game.is_active = False
+            player_game.final_stack = player_game.stack  # Record final stack for win/loss tracking
             player_game.save()
             
             logger.info(f"💰 Player {request.user.username} cashed out (staying at table) with ${player_game.stack} from game {game.id}")
-            
-            # Broadcast update to show player as cashed out
-            GameService.broadcast_game_update(game.id)
             
             # Check if we need to end the game (only active, non-cashed-out players count)
             active_players = PlayerGame.objects.filter(game=game, is_active=True, cashed_out=False)
@@ -445,11 +485,37 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
                 game.save()
                 logger.info(f"🏁 Game {game.id} ended - no active players remaining")
             
-            return Response({
+            # Check if game summary should be generated (all players have cashed out)
+            all_players = PlayerGame.objects.filter(game=game)
+            players_with_final_stack = all_players.filter(final_stack__isnull=False)
+            game_summary_generated = False
+            
+            if all_players.count() > 0 and players_with_final_stack.count() == all_players.count():
+                # All players have cashed out, generate game summary
+                summary = game.generate_game_summary()
+                game_summary_generated = True
+                logger.info(f"📊 Game summary generated for game {game.id}")
+                
+                # Broadcast special game summary notification to all connected clients
+                GameService.broadcast_game_summary_available(game.id, summary)
+            else:
+                # Regular broadcast update to show player as cashed out
+                GameService.broadcast_game_update(game.id)
+            
+            # Prepare response data
+            response_data = {
                 'success': True, 
                 'message': 'Cashed out successfully. You can buy back in or leave the table.',
-                'stack': str(player_game.stack)
-            })
+                'stack': str(player_game.stack),
+                'game_summary_generated': game_summary_generated
+            }
+            
+            # Include summary in response if it was generated
+            if game_summary_generated:
+                response_data['game_summary'] = summary
+                response_data['message'] = 'Cashed out successfully. Game summary has been generated as all players have cashed out.'
+            
+            return Response(response_data)
             
         except PlayerGame.DoesNotExist:
             logger.warning(f"Player {request.user.username} tried to cash out but is not at table")
@@ -524,6 +590,13 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             player_game.stack += buy_in  # Add to existing stack
             player_game.cashed_out = False
             player_game.is_active = True
+            # Update starting stack to reflect the new buy-in (total investment)
+            if player_game.starting_stack is None:
+                player_game.starting_stack = buy_in
+            else:
+                player_game.starting_stack += buy_in
+            # Clear final stack since they're back in play
+            player_game.final_stack = None
             player_game.save()
             
             logger.info(f"🔄 Player {request.user.username} bought back in with ${buy_in} to game {game.id} (total stack: ${player_game.stack})")

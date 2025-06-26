@@ -42,10 +42,11 @@ class PlayerGameSerializer(serializers.ModelSerializer):
     player = PlayerSerializer(read_only=True)
     cards = serializers.SerializerMethodField()
     status = serializers.ReadOnlyField()
+    win_loss = serializers.SerializerMethodField()
     
     class Meta:
         model = PlayerGame
-        fields = ['id', 'player', 'seat_position', 'stack', 'is_active', 'cashed_out', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand', 'status']
+        fields = ['id', 'player', 'seat_position', 'stack', 'starting_stack', 'final_stack', 'is_active', 'cashed_out', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand', 'status', 'win_loss']
     
     def get_cards(self, obj):
         # Always send cards data and let frontend handle visibility
@@ -55,6 +56,9 @@ class PlayerGameSerializer(serializers.ModelSerializer):
             'owner_id': obj.player.user.id,
             'owner_username': obj.player.user.username
         }
+    
+    def get_win_loss(self, obj):
+        return obj.calculate_win_loss()
 
 class GameActionSerializer(serializers.ModelSerializer):
     player = serializers.SerializerMethodField()
@@ -77,11 +81,12 @@ class GameSerializer(serializers.ModelSerializer):
     community_cards = serializers.SerializerMethodField()
     actions = serializers.SerializerMethodField()
     winner_info = serializers.SerializerMethodField()
+    game_summary = serializers.SerializerMethodField()
     
     class Meta:
         model = Game
         fields = ['id', 'table', 'status', 'phase', 'pot', 'current_bet', 'dealer_position', 
-                  'current_player', 'community_cards', 'players', 'actions', 'created_at', 'winner_info']
+                  'current_player', 'community_cards', 'players', 'actions', 'created_at', 'winner_info', 'game_summary']
     
     def get_community_cards(self, obj):
         return obj.get_community_cards()
@@ -108,6 +113,9 @@ class GameSerializer(serializers.ModelSerializer):
     
     def get_winner_info(self, obj):
         return obj.get_winner_info()
+    
+    def get_game_summary(self, obj):
+        return obj.get_game_summary()
 
 class GameActionRequestSerializer(serializers.Serializer):
     action_type = serializers.ChoiceField(choices=['FOLD', 'CHECK', 'CALL', 'BET', 'RAISE'])

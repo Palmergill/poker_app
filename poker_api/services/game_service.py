@@ -53,6 +53,7 @@ class GameService:
                 game=game,
                 seat_position=i,
                 stack=buy_in,
+                starting_stack=buy_in,  # Record initial stack for win/loss tracking
                 is_active=True
             )
             player_names.append(f"{player.user.username} (${buy_in})")
@@ -1136,6 +1137,41 @@ class GameService:
         )
         
         logger.debug(f"Broadcast completed for game {game_id}")
+
+    @staticmethod
+    def broadcast_game_summary_available(game_id, summary_data):
+        """
+        Broadcast special notification that a game summary is available to all connected clients.
+        This is sent when all players have cashed out and the game summary has been generated.
+        """
+        try:
+            game = Game.objects.get(id=game_id)
+        except Game.DoesNotExist:
+            logger.error(f"Cannot broadcast game summary - game {game_id} not found")
+            return
+        
+        logger.info(f"Broadcasting game summary availability for game {game_id}")
+        
+        # Create broadcast message with game summary data
+        broadcast_data = {
+            'type': 'game_summary_available',
+            'game_id': game_id,
+            'game_summary': summary_data,
+            'message': 'Game summary is now available - all players have cashed out',
+            'game_status': game.status,
+            'total_hands': game.hand_count
+        }
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'game_{game_id}',
+            {
+                'type': 'game_summary_notification',
+                'data': broadcast_data
+            }
+        )
+        
+        logger.info(f"Game summary broadcast completed for game {game_id} - {len(summary_data.get('players', []))} players included")
 
         # Call this method after game state changes, for example:
         # At the end of process_action

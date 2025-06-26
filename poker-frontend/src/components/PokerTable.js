@@ -124,8 +124,9 @@ const PokerTable = () => {
             )
           );
           const currentPlayerIsReady = currentPlayerGame?.ready_for_next_hand || false;
+          const currentPlayerIsCashedOut = currentPlayerGame?.cashed_out || false;
           
-          if (!currentPlayerIsReady) {
+          if (!currentPlayerIsReady && !currentPlayerIsCashedOut) {
             console.log('🔄 Restoring hand results popup after browser refresh');
             
             // Handle winner_info which comes from API as already parsed object
@@ -155,7 +156,7 @@ const PokerTable = () => {
             setShowHandResults(true);
             console.log('✅ Hand results popup restored');
           } else {
-            console.log('🚫 Current player is ready - not restoring popup');
+            console.log('🚫 Current player is ready or cashed out - not restoring popup');
           }
         }
         
@@ -269,6 +270,7 @@ const PokerTable = () => {
               )
             );
             const currentPlayerIsReady = currentPlayerGame?.ready_for_next_hand || false;
+            const currentPlayerIsCashedOut = currentPlayerGame?.cashed_out || false;
             
             const winnerInfo = updatedGame.winner_info;
             
@@ -281,8 +283,8 @@ const PokerTable = () => {
               allPlayers: updatedGame.players || [] // Store all players for money change tracking
             };
             
-            // Only show popup if we don't already have one showing for this hand AND current player is not ready
-            if ((!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) && !currentPlayerIsReady) {
+            // Only show popup if we don't already have one showing for this hand AND current player is not ready AND not cashed out
+            if ((!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) && !currentPlayerIsReady && !currentPlayerIsCashedOut) {
               console.log('✅ Showing hand results popup for hand #', newHistoryEntry.handNumber);
               setCurrentHandResult(newHistoryEntry);
               setShowHandResults(true);
@@ -308,6 +310,8 @@ const PokerTable = () => {
             } else {
               if (currentPlayerIsReady) {
                 console.log('🚫 Current player is ready - not showing popup via WebSocket');
+              } else if (currentPlayerIsCashedOut) {
+                console.log('🚫 Current player is cashed out (spectating) - not showing popup via WebSocket');
               } else {
                 console.log('⏭️ Skipping popup - already showing for this hand');
               }

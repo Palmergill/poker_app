@@ -52,6 +52,7 @@ class Game(models.Model):
     current_player = models.ForeignKey(Player, on_delete=models.SET_NULL, null=True, blank=True, related_name='games_to_play')
     community_cards = models.CharField(max_length=100, blank=True, null=True)  # Stored as JSON string
     winner_info = models.TextField(blank=True, null=True)  # Stored as JSON string with winner details
+    game_summary = models.TextField(blank=True, null=True)  # Stored as JSON string with final results when all players cash out
     hand_count = models.PositiveIntegerField(default=0)  # Tracks number of completed hands
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -78,6 +79,52 @@ class Game(models.Model):
         if self.winner_info:
             return json.loads(self.winner_info)
         return None
+    
+    def set_game_summary(self, summary_data):
+        """Stores game summary as JSON string."""
+        self.game_summary = json.dumps(summary_data)
+    
+    def get_game_summary(self):
+        """Retrieves game summary from JSON string."""
+        if self.game_summary:
+            return json.loads(self.game_summary)
+        return None
+    
+    def generate_game_summary(self):
+        """Generate and store game summary when game ends."""
+        from django.utils import timezone
+        
+        # Get all players who participated in this game
+        all_players = PlayerGame.objects.filter(game=self)
+        
+        summary_data = {
+            'game_id': self.id,
+            'table_name': self.table.name,
+            'completed_at': timezone.now().isoformat(),
+            'total_hands': self.hand_count,
+            'players': []
+        }
+        
+        for pg in all_players:
+            win_loss = pg.calculate_win_loss()
+            player_data = {
+                'player_name': pg.player.user.username,
+                'player_id': pg.player.id,
+                'starting_stack': float(pg.starting_stack) if pg.starting_stack else 0,
+                'final_stack': float(pg.final_stack) if pg.final_stack is not None else float(pg.stack),
+                'win_loss': float(win_loss) if win_loss is not None else 0,
+                'status': pg.status
+            }
+            summary_data['players'].append(player_data)
+        
+        # Sort players by win/loss (highest to lowest)
+        summary_data['players'].sort(key=lambda x: x['win_loss'], reverse=True)
+        
+        self.set_game_summary(summary_data)
+        self.status = 'FINISHED'
+        self.save()
+        
+        return summary_data
 
 class PlayerGame(models.Model):
     """Represents a player's participation in a specific game."""
@@ -85,6 +132,8 @@ class PlayerGame(models.Model):
     game = models.ForeignKey(Game, on_delete=models.CASCADE)
     seat_position = models.IntegerField()
     stack = models.DecimalField(max_digits=10, decimal_places=2)
+    starting_stack = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # Initial stack when joining game
+    final_stack = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # Final stack when cashing out/leaving
     is_active = models.BooleanField(default=True)
     cashed_out = models.BooleanField(default=False)  # Player has cashed out but still at table
     cards = models.CharField(max_length=50, blank=True, null=True)  # Stored as JSON string
@@ -143,6 +192,20 @@ class PlayerGame(models.Model):
             return 'ACTIVE'
         else:
             return 'INACTIVE'
+    
+    def calculate_win_loss(self):
+        """Calculate win/loss amount for this player in the game."""
+        if self.starting_stack is None:
+            return None
+        
+        # If still playing, use current stack
+        if not self.cashed_out and self.final_stack is None:
+            current_amount = self.stack
+        else:
+            # Use final stack if available, otherwise current stack
+            current_amount = self.final_stack if self.final_stack is not None else self.stack
+        
+        return current_amount - self.starting_stack
     
 class GameAction(models.Model):
     """Represents a player's action during a poker game."""

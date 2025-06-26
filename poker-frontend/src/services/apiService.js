@@ -142,6 +142,7 @@ const gameService = {
   setPlayerReady: (id) => apiClient.post(`/games/${id}/ready/`),
   
   // Cash out from active play (stay at table but become inactive)
+  // Returns: { success: boolean, message: string, game_summary_generated?: boolean }
   cashOut: (id) => apiClient.post(`/games/${id}/cash_out/`),
   
   // Buy back into the game after cashing out
@@ -239,6 +240,33 @@ const gameService = {
 
   // Get hand history for a specific game
   getHandHistory: (gameId) => apiClient.get(`/games/${gameId}/hand-history/`),
+
+  // Get game summary for a completed game
+  // Returns game summary with metadata, player results, and performance rankings
+  // Response structure:
+  // {
+  //   game: {
+  //     id: number,
+  //     table_name: string,
+  //     completion_time: string (ISO datetime),
+  //     total_hands: number,
+  //     status: string
+  //   },
+  //   player_results: [
+  //     {
+  //       player_id: number,
+  //       player_name: string,
+  //       starting_stack: number,
+  //       final_stack: number,
+  //       win_loss: number,
+  //       status: string
+  //     }
+  //   ],
+  //   players_by_performance: [
+  //     // Same structure as player_results but sorted by win_loss (highest to lowest)
+  //   ]
+  // }
+  getGameSummary: (id) => apiClient.get(`/games/${id}/summary/`),
 };
 
 export { authService, playerService, tableService, gameService };

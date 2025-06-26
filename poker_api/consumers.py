@@ -116,6 +116,26 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
             logger.debug(f"Game update sent successfully to {user_str}")
         except Exception as e:
             logger.error(f"Failed to send game update to {user_str}: {str(e)}")
+
+    async def game_summary_notification(self, event):
+        """Receive and forward game summary notification messages from the game group."""
+        user = self.scope.get('user')
+        user_str = user.username if hasattr(user, 'username') else 'Anonymous'
+        summary_data = event.get('data', {})
+        
+        # Log game summary notification details
+        game_id = summary_data.get('game_id', 'unknown')
+        total_hands = summary_data.get('total_hands', 0)
+        player_count = len(summary_data.get('game_summary', {}).get('players', []))
+        
+        logger.info(f"Forwarding game summary notification to {user_str}: game={game_id}, hands={total_hands}, players={player_count}")
+        
+        # Send message to WebSocket
+        try:
+            await self.send(text_data=json.dumps(summary_data))
+            logger.info(f"Game summary notification sent successfully to {user_str}")
+        except Exception as e:
+            logger.error(f"Failed to send game summary notification to {user_str}: {str(e)}")
     
     @database_sync_to_async
     def can_join_game(self, user):
