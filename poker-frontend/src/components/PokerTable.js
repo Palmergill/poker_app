@@ -216,7 +216,22 @@ const PokerTable = () => {
       gameId,
       // onMessage
       (data) => {
+        // Check if this is a game summary notification (all players cashed out)
+        if (data.type === 'game_summary_available') {
+          console.log('Game summary notification received:', data);
+          
+          // Show a notification that the game has ended
+          showMessage("Game completed! All players have cashed out. Redirecting to summary...", "info");
+          
+          // Redirect to game summary page after a brief delay
+          setTimeout(() => {
+            navigate(`/games/${gameId}/summary`);
+          }, 2000);
+          
+          return;
+        }
         
+        // Handle regular game updates
         // Preserve any existing card data that might have been loaded from API
         setGame(currentGame => {
           if (!currentGame) {
@@ -315,6 +330,21 @@ const PokerTable = () => {
               } else {
                 console.log('⏭️ Skipping popup - already showing for this hand');
               }
+            }
+          }
+          
+          // Check if the game is finished and all players have cashed out
+          if (updatedGame.status === 'FINISHED' && updatedGame.players) {
+            const allPlayersCashedOut = updatedGame.players.every(player => player.cashed_out);
+            const hasPlayers = updatedGame.players.length > 0;
+            
+            if (allPlayersCashedOut && hasPlayers) {
+              console.log('All players have cashed out, redirecting to summary...');
+              showMessage("Game completed! All players have cashed out. Redirecting to summary...", "info");
+              
+              setTimeout(() => {
+                navigate(`/games/${gameId}/summary`);
+              }, 2000);
             }
           }
           
@@ -506,6 +536,10 @@ const PokerTable = () => {
 
     // Validate buy-in amount against table limits
     const table = game.table;
+    if (!table) {
+      showMessage("Table information not available. Cannot buy back in to a finished game.", "error");
+      return;
+    }
     if (buyInAmount < table.min_buy_in) {
       showMessage(`Buy-in must be at least $${table.min_buy_in}`, "error");
       return;
@@ -616,7 +650,7 @@ const PokerTable = () => {
     const playerStack = parseFloat(currentPlayer.stack || 0);
 
     const canCheck = currentBet === playerBet;
-    const minBet = parseFloat(game.table.big_blind);
+    const minBet = parseFloat(game.table?.big_blind || 0);
     const minRaise = currentBet * 2;
 
     return (
@@ -960,9 +994,27 @@ const PokerTable = () => {
     const currentPlayer = findCurrentPlayer();
     const isCashedOut = currentPlayer && currentPlayer.cashed_out;
     
+    // Get table name safely with fallback - handle both game data and game summary structures
+    const tableName = game?.table?.name || 
+                     game?.table_name || 
+                     game?.game_summary?.table_name || 
+                     'Unknown Table';
+    
+    // Debug logging to understand game structure when table is missing
+    if (!game?.table?.name && !game?.table_name && !game?.game_summary?.table_name) {
+      console.warn('Table name not found in game object:', {
+        hasTable: !!game?.table,
+        hasTableName: !!game?.table_name,
+        hasGameSummary: !!game?.game_summary,
+        summaryKeys: game?.game_summary ? Object.keys(game.game_summary) : 'no summary',
+        tableKeys: game?.table ? Object.keys(game.table) : 'no table',
+        gameKeys: game ? Object.keys(game) : 'no game'
+      });
+    }
+    
     return (
       <div className="game-info-card">
-        <h3>{game.table.name}</h3>
+        <h3>{tableName}</h3>
         <div className="game-status-compact">
           <div><strong>Status:</strong> {game.status}</div>
           {game.phase && <div><strong>Phase:</strong> {game.phase}</div>}
@@ -1226,6 +1278,30 @@ const PokerTable = () => {
     if (!showBuyInDialog) return null;
 
     const table = game.table;
+    if (!table || game.status === 'FINISHED') {
+      return (
+        <div className="buy-in-overlay">
+          <div className="buy-in-dialog">
+            <div className="buy-in-header">
+              <h2>❌ Cannot Buy Back In</h2>
+            </div>
+            <div className="buy-in-content">
+              <p>
+                {game.status === 'FINISHED' 
+                  ? 'This game has finished. You cannot buy back in.' 
+                  : 'Table information not available. Please refresh the page.'}
+              </p>
+              <button 
+                className="buy-in-cancel-btn"
+                onClick={() => setShowBuyInDialog(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="buy-in-overlay">

@@ -3,6 +3,7 @@ import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
+from django.core.serializers.json import DjangoJSONEncoder
 from .models import Game, PlayerGame
 import logging
 
@@ -53,7 +54,7 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
             try:
                 logger.debug(f"Fetching initial game state for {user.username}")
                 game_state = await self.get_game_state()
-                await self.send(text_data=json.dumps(game_state))
+                await self.send(text_data=json.dumps(game_state, cls=DjangoJSONEncoder))
                 logger.debug(f"Initial game state sent to {user.username}")
             except Exception as e:
                 logger.error(f"Failed to send initial game state to {user.username}: {str(e)}")
@@ -112,7 +113,7 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
         
         # Send message to WebSocket
         try:
-            await self.send(text_data=json.dumps(event['data']))
+            await self.send(text_data=json.dumps(event['data'], cls=DjangoJSONEncoder))
             logger.debug(f"Game update sent successfully to {user_str}")
         except Exception as e:
             logger.error(f"Failed to send game update to {user_str}: {str(e)}")
@@ -132,7 +133,7 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
         
         # Send message to WebSocket
         try:
-            await self.send(text_data=json.dumps(summary_data))
+            await self.send(text_data=json.dumps(summary_data, cls=DjangoJSONEncoder))
             logger.info(f"Game summary notification sent successfully to {user_str}")
         except Exception as e:
             logger.error(f"Failed to send game summary notification to {user_str}: {str(e)}")

@@ -9,6 +9,7 @@ from asgiref.sync import async_to_sync
 import json
 from decimal import Decimal
 from django.utils import timezone
+from django.core.serializers.json import DjangoJSONEncoder
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1127,12 +1128,16 @@ class GameService:
         # Create serializer without user context - cards will be handled on frontend
         serializer = GameSerializer(game)
         
+        # Convert to JSON and back to ensure Decimal objects are properly serialized
+        # This prevents msgpack serialization errors in channels-redis
+        serialized_data = json.loads(json.dumps(serializer.data, cls=DjangoJSONEncoder))
+        
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f'game_{game_id}',
             {
                 'type': 'game_update', 
-                'data': serializer.data
+                'data': serialized_data
             }
         )
         
@@ -1162,12 +1167,16 @@ class GameService:
             'total_hands': game.hand_count
         }
         
+        # Convert to JSON and back to ensure Decimal objects are properly serialized
+        # This prevents msgpack serialization errors in channels-redis
+        serialized_broadcast_data = json.loads(json.dumps(broadcast_data, cls=DjangoJSONEncoder))
+        
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f'game_{game_id}',
             {
                 'type': 'game_summary_notification',
-                'data': broadcast_data
+                'data': serialized_broadcast_data
             }
         )
         

@@ -1,4 +1,4 @@
-// src/App.js - Updated with CreateTable route
+// src/App.js - Updated with CreateTable and GameSummary routes
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
@@ -9,6 +9,7 @@ import TableList from './components/TableList';
 import TableDetail from './components/TableDetail';
 import CreateTable from './components/CreateTable';
 import PokerTable from './components/PokerTable';
+import GameSummary from './components/GameSummary';
 import PrivateRoute from './components/PrivateRoute';
 import './App.css';
 
@@ -50,6 +51,12 @@ function App() {
             <Route path="/games/:id" element={
               <PrivateRoute>
                 <PokerTable />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/games/:gameId/summary" element={
+              <PrivateRoute>
+                <GameSummary />
               </PrivateRoute>
             } />
             
