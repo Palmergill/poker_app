@@ -10,6 +10,7 @@ import TableDetail from './components/TableDetail';
 import CreateTable from './components/CreateTable';
 import PokerTable from './components/PokerTable';
 import GameSummary from './components/GameSummary';
+import MatchHistory from './components/MatchHistory';
 import PrivateRoute from './components/PrivateRoute';
 import './App.css';
 
@@ -27,6 +28,12 @@ function App() {
             <Route path="/profile" element={
               <PrivateRoute>
                 <Profile />
+              </PrivateRoute>
+            } />
+            
+            <Route path="/history" element={
+              <PrivateRoute>
+                <MatchHistory />
               </PrivateRoute>
             } />
             

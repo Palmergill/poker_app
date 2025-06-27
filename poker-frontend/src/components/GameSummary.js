@@ -147,7 +147,6 @@ const GameSummary = () => {
                   <th>Buy-in</th>
                   <th>Cash Out</th>
                   <th>Win/Loss</th>
-                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -159,7 +158,6 @@ const GameSummary = () => {
                     <td className={`win-loss ${player.win_loss > 0 ? 'positive' : player.win_loss < 0 ? 'negative' : 'neutral'}`}>
                       {player.win_loss > 0 ? '+' : ''}{formatCurrency(player.win_loss)}
                     </td>
-                    <td className="status">{player.status}</td>
                   </tr>
                 ))}
               </tbody>

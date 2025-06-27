@@ -124,6 +124,18 @@ class Game(models.Model):
         self.status = 'FINISHED'
         self.save()
         
+        # Create persistent GameSummary that survives table deletion
+        game_summary = GameSummary.objects.create(
+            game_id=self.id,
+            table_name=self.table.name
+        )
+        game_summary.set_summary_data(summary_data)
+        game_summary.save()
+        
+        # Add all participants to the summary so they can access it
+        participant_users = [pg.player.user for pg in all_players]
+        game_summary.participants.set(participant_users)
+        
         return summary_data
 
 class PlayerGame(models.Model):
@@ -136,6 +148,8 @@ class PlayerGame(models.Model):
     final_stack = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # Final stack when cashing out/leaving
     is_active = models.BooleanField(default=True)
     cashed_out = models.BooleanField(default=False)  # Player has cashed out but still at table
+    left_table = models.BooleanField(default=False)  # Player has left the table completely
+    left_at = models.DateTimeField(null=True, blank=True)  # When player left the table
     cards = models.CharField(max_length=50, blank=True, null=True)  # Stored as JSON string
     current_bet = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_bet = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -186,7 +200,9 @@ class PlayerGame(models.Model):
     @property
     def status(self):
         """Return the current status of the player."""
-        if self.cashed_out:
+        if self.left_table:
+            return 'LEFT_EARLY'
+        elif self.cashed_out:
             return 'CASHED_OUT'
         elif self.is_active:
             return 'ACTIVE'
@@ -295,6 +311,32 @@ class HandHistory(models.Model):
         if self.community_cards:
             return json.loads(self.community_cards)
         return []
+
+
+class GameSummary(models.Model):
+    """Persistent storage for game summaries that survive table deletion."""
+    game_id = models.IntegerField()  # Original game ID (not foreign key since game may be deleted)
+    table_name = models.CharField(max_length=100)
+    summary_data = models.TextField()  # JSON string containing the complete summary
+    created_at = models.DateTimeField(auto_now_add=True)
+    participants = models.ManyToManyField(User, related_name='game_summaries')  # Users who can access this summary
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def set_summary_data(self, data):
+        """Stores summary data as JSON string."""
+        self.summary_data = json.dumps(data)
+    
+    def get_summary_data(self):
+        """Retrieves summary data from JSON string."""
+        if self.summary_data:
+            return json.loads(self.summary_data)
+        return None
+    
+    def __str__(self):
+        return f"Game Summary - {self.table_name} (Game {self.game_id})"
+
 
 # class Card(models.Model):
 #     SUIT_CHOICES = [

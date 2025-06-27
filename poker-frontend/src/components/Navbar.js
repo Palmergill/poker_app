@@ -23,6 +23,7 @@ const Navbar = () => {
         {isAuthenticated ? (
           <>
             <Link to="/tables" className="nav-item">Tables</Link>
+            <Link to="/history" className="nav-item">Match History</Link>
             <Link to="/profile" className="nav-item">Profile</Link>
             <span className="nav-item username">Hello, {user ? user.username : 'Player'}</span>
             <button onClick={handleLogout} className="nav-item logout-btn">Logout</button>

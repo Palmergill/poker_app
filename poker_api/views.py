@@ -248,26 +248,48 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'])
     def summary(self, request, pk=None):
         """Get game summary if available"""
-        game = self.get_object()
+        from .models import GameSummary
         
-        # Check if user participated in this game
-        if not PlayerGame.objects.filter(game=game, player__user=request.user).exists():
-            return Response(
-                {'error': 'You did not participate in this game'},
-                status=status.HTTP_403_FORBIDDEN
+        try:
+            # First try to get the game if it still exists
+            game = self.get_object()
+            
+            # Check if user participated in this game
+            if not PlayerGame.objects.filter(game=game, player__user=request.user).exists():
+                return Response(
+                    {'error': 'You did not participate in this game'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            summary_data = game.get_game_summary()
+            if summary_data:
+                return Response({
+                    'game_summary': summary_data,
+                    'game_status': game.status
+                })
+                
+        except (Game.DoesNotExist, Exception):
+            # Game has been deleted or other error, try to get from persistent GameSummary
+            pass
+        
+        # Look for persistent GameSummary
+        try:
+            game_summary = GameSummary.objects.get(
+                game_id=pk,
+                participants__in=[request.user]
             )
-        
-        summary_data = game.get_game_summary()
-        if not summary_data:
+            summary_data = game_summary.get_summary_data()
+            
+            return Response({
+                'game_summary': summary_data,
+                'game_status': 'FINISHED'
+            })
+            
+        except GameSummary.DoesNotExist:
             return Response(
-                {'error': 'Game summary not available yet'},
+                {'error': 'Game summary not available'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        return Response({
-            'game_summary': summary_data,
-            'game_status': game.status
-        })
 
     @action(detail=True, methods=['get'])
     def debug_state(self, request, pk=None):
@@ -332,17 +354,21 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
             
             logger.info(f"💸 Player {request.user.username} left table with ${leave_amount} from game {game.id}")
             
-            # Store player data for potential game summary before deletion
-            all_players_before_delete = list(PlayerGame.objects.filter(game=game))
+            # Mark player as left instead of deleting (preserve for game summary)
+            from django.utils import timezone
+            player_game.left_table = True
+            player_game.left_at = timezone.now()
+            player_game.is_active = False
+            player_game.save()
             
-            # Remove player from game completely
-            player_game.delete()
+            # Store player data for potential game summary
+            all_players_before_delete = list(PlayerGame.objects.filter(game=game))
             
             # Broadcast update to remove player from UI
             GameService.broadcast_game_update(game.id)
             
-            # Check if we need to end the game
-            remaining_players = PlayerGame.objects.filter(game=game)
+            # Check if we need to end the game (only count players who haven't left)
+            remaining_players = PlayerGame.objects.filter(game=game, left_table=False)
             active_players = remaining_players.filter(is_active=True, cashed_out=False)
             
             if remaining_players.count() == 0:
@@ -354,6 +380,12 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
                     logger.info(f"📊 Game summary generated for completed game {game.id}")
                     # Broadcast game summary notification (even though no players are left, other systems might need it)
                     GameService.broadcast_game_summary_available(game.id, summary)
+                    
+                    # Automatically delete the table since the game is complete
+                    table = game.table
+                    table_name = table.name
+                    table.delete()  # This will cascade delete the game and all related data
+                    logger.info(f"🗑️ Table '{table_name}' automatically deleted after game completion")
                 else:
                     game.status = 'FINISHED'
                     game.save()
@@ -498,6 +530,12 @@ class GameViewSet(viewsets.ReadOnlyModelViewSet):
                 
                 # Broadcast special game summary notification to all connected clients
                 GameService.broadcast_game_summary_available(game.id, summary)
+                
+                # Automatically delete the table since the game is complete
+                table = game.table
+                table_name = table.name
+                table.delete()  # This will cascade delete the game and all related data
+                logger.info(f"🗑️ Table '{table_name}' automatically deleted after game completion")
             else:
                 # Regular broadcast update to show player as cashed out
                 GameService.broadcast_game_update(game.id)
@@ -689,6 +727,84 @@ class PlayerViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': 'Invalid amount'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+    
+    @action(detail=False, methods=['get'])
+    def match_history(self, request):
+        """Get the current user's match history including ongoing games"""
+        from .models import GameSummary
+        from django.utils import timezone
+        
+        # Get current player
+        player, created = Player.objects.get_or_create(user=request.user)
+        
+        history_data = []
+        
+        # First, add ongoing games (games where user is participating but not completed)
+        active_player_games = PlayerGame.objects.filter(
+            player=player,
+            game__status__in=['WAITING', 'PLAYING']
+        ).select_related('game', 'game__table')
+        
+        for pg in active_player_games:
+            game = pg.game
+            current_stack = pg.stack if not pg.left_table else pg.final_stack or pg.stack
+            win_loss = current_stack - (pg.starting_stack or 0)
+            
+            history_item = {
+                'game_id': game.id,
+                'table_name': game.table.name,
+                'completed_at': None,  # Not completed yet
+                'status': 'ONGOING',
+                'total_hands': game.hand_count or 0,
+                'total_players': PlayerGame.objects.filter(game=game, left_table=False).count(),
+                'user_result': {
+                    'starting_stack': float(pg.starting_stack) if pg.starting_stack else 0,
+                    'final_stack': float(current_stack),
+                    'win_loss': float(win_loss),
+                    'status': pg.status
+                }
+            }
+            history_data.append(history_item)
+        
+        # Then, add completed games from GameSummary
+        game_summaries = GameSummary.objects.filter(
+            participants=request.user
+        ).order_by('-created_at')
+        
+        for gs in game_summaries:
+            summary_data = gs.get_summary_data()
+            if summary_data:
+                # Find current user's data in the summary
+                user_data = None
+                for player_data in summary_data.get('players', []):
+                    if player_data.get('player_name') == request.user.username:
+                        user_data = player_data
+                        break
+                
+                history_item = {
+                    'game_id': gs.game_id,
+                    'table_name': gs.table_name,
+                    'completed_at': summary_data.get('completed_at'),
+                    'status': 'COMPLETED',
+                    'total_hands': summary_data.get('total_hands', 0),
+                    'total_players': len(summary_data.get('players', [])),
+                    'user_result': {
+                        'starting_stack': user_data.get('starting_stack', 0) if user_data else 0,
+                        'final_stack': user_data.get('final_stack', 0) if user_data else 0,
+                        'win_loss': user_data.get('win_loss', 0) if user_data else 0,
+                        'status': user_data.get('status', 'Unknown') if user_data else 'Unknown'
+                    }
+                }
+                history_data.append(history_item)
+        
+        # Sort by date (ongoing games first, then most recent completed)
+        history_data.sort(key=lambda x: (x['status'] != 'ONGOING', x['completed_at'] or timezone.now()), reverse=True)
+        
+        return Response({
+            'match_history': history_data,
+            'total_games': len(history_data)
+        })
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register_user(request):

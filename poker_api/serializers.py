@@ -46,7 +46,7 @@ class PlayerGameSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PlayerGame
-        fields = ['id', 'player', 'seat_position', 'stack', 'starting_stack', 'final_stack', 'is_active', 'cashed_out', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand', 'status', 'win_loss']
+        fields = ['id', 'player', 'seat_position', 'stack', 'starting_stack', 'final_stack', 'is_active', 'cashed_out', 'left_table', 'left_at', 'cards', 'current_bet', 'total_bet', 'ready_for_next_hand', 'status', 'win_loss']
     
     def get_cards(self, obj):
         # Always send cards data and let frontend handle visibility
@@ -92,7 +92,8 @@ class GameSerializer(serializers.ModelSerializer):
         return obj.get_community_cards()
     
     def get_players(self, obj):
-        player_games = PlayerGame.objects.filter(game=obj).order_by('seat_position')
+        # Only include players who haven't left the table for UI display
+        player_games = PlayerGame.objects.filter(game=obj, left_table=False).order_by('seat_position')
         serializer = PlayerGameSerializer(player_games, many=True, context=self.context)
         return serializer.data
     

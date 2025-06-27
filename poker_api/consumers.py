@@ -33,7 +33,11 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
             
             # Check if user can join this game
             can_join = await self.can_join_game(user)
-            if not can_join:
+            if can_join == "GAME_NOT_FOUND":
+                logger.warning(f"User {user.username} denied access - game {self.game_id} does not exist")
+                await self.close(code=4004)  # Custom close code for game not found
+                return
+            elif not can_join:
                 logger.warning(f"User {user.username} denied access to game {self.game_id} - not a player")
                 await self.close(code=4003)  # Custom close code for permission denied
                 return
@@ -152,7 +156,8 @@ class PokerGameConsumer(AsyncWebsocketConsumer):
             return is_player
         except Game.DoesNotExist:
             logger.error(f"Authorization check failed - Game {self.game_id} does not exist")
-            return False
+            # Return a special value to indicate game not found
+            return "GAME_NOT_FOUND"
         except Exception as e:
             logger.error(f"Authorization check failed for {user.username} in game {self.game_id}: {str(e)}")
             return False

@@ -105,6 +105,8 @@ const playerService = {
   deposit: (amount) => apiClient.post(`/players/deposit/`, { amount }),
   // Withdraw money from player's account
   withdraw: (amount) => apiClient.post(`/players/withdraw/`, { amount }),
+  // Get current player's match history
+  getMatchHistory: () => apiClient.get(`/players/match_history/`),
 };
 
 const tableService = {
@@ -212,6 +214,10 @@ const gameService = {
           case 4003:
             console.error("WebSocket closed: Permission denied");
             if (onErrorCallback) onErrorCallback("Permission denied");
+            break;
+          case 4004:
+            console.error("WebSocket closed: Game not found");
+            if (onErrorCallback) onErrorCallback("Game not found");
             break;
           case 1006:
             console.error("WebSocket closed: Connection lost");

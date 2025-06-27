@@ -16,8 +16,13 @@ const PokerTable = () => {
   const [handHistory, setHandHistory] = useState([]); // Store last 5 hand results
   const [showHandResults, setShowHandResults] = useState(false); // Show hand results popup
   const [currentHandResult, setCurrentHandResult] = useState(null); // Current hand result data
-  const [actionType] = useState("CHECK");
+  // Enhanced action system state
+  const [preAction, setPreAction] = useState(null); // Store pre-selected action
+  const [preActionAmount, setPreActionAmount] = useState(0); // Pre-selected bet amount
   const [betAmount, setBetAmount] = useState(0);
+  const [showBettingInterface, setShowBettingInterface] = useState(false);
+  const [betSliderValue, setBetSliderValue] = useState(0);
+  const [lastBetAmount, setLastBetAmount] = useState(0); // Store last bet made at table
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [buyInAmount, setBuyInAmount] = useState(0); // For buy back in
   const [showBuyInDialog, setShowBuyInDialog] = useState(false); // Show buy in dialog
@@ -77,7 +82,14 @@ const PokerTable = () => {
           connectWebSocket(response.data.id);
         }, 100); // Small delay to ensure state is set
       } catch (err) {
-        showMessage("Failed to load game", "error");
+        if (err.response?.status === 404) {
+          showMessage("Game not found. Redirecting to tables...", "info");
+          setTimeout(() => {
+            navigate("/tables");
+          }, 2000);
+        } else {
+          showMessage("Failed to load game", "error");
+        }
         setLoading(false);
       }
     };
@@ -97,6 +109,101 @@ const PokerTable = () => {
       }
     };
   }, [id]);
+
+  // Initialize bet slider when component mounts or game state changes
+  useEffect(() => {
+    if (game && game.table && game.players) {
+      const currentUser = getCurrentUserInfo();
+      if (!currentUser) return;
+      
+      // Find current player without calling findCurrentPlayer function
+      let currentPlayer = null;
+      if (currentUser.id) {
+        currentPlayer = game.players.find(
+          (p) => p.player.user.id === currentUser.id
+        );
+      }
+      if (!currentPlayer && currentUser.username) {
+        currentPlayer = game.players.find(
+          (p) => p.player.user.username === currentUser.username
+        );
+      }
+      
+      if (currentPlayer) {
+        const currentBet = parseFloat(game.current_bet || 0);
+        const minBet = parseFloat(game.table.big_blind || 0);
+        const minRaise = Math.max(currentBet * 2, currentBet + minBet);
+        const initialValue = currentBet === 0 ? minBet : minRaise;
+        setBetSliderValue(initialValue);
+        setBetAmount(initialValue);
+      }
+    }
+  }, [game?.current_bet, game?.table?.big_blind, game?.players]);
+
+  // Auto-submit pre-action when it becomes player's turn
+  useEffect(() => {
+    if (!game || !game.players) return;
+    
+    const currentUser = getCurrentUserInfo();
+    if (!currentUser) return;
+    
+    // Find current player without calling findCurrentPlayer function
+    let currentPlayer = null;
+    if (currentUser.id) {
+      currentPlayer = game.players.find(
+        (p) => p.player.user.id === currentUser.id
+      );
+    }
+    if (!currentPlayer && currentUser.username) {
+      currentPlayer = game.players.find(
+        (p) => p.player.user.username === currentUser.username
+      );
+    }
+    
+    // Check if it's player's turn without calling isPlayerTurn function
+    const isMyTurn = currentPlayer &&
+      game.current_player &&
+      game.current_player.id === currentPlayer.player.id;
+    
+    if (isMyTurn && preAction && currentPlayer && !currentPlayer.cashed_out) {
+      const executePreAction = async () => {
+        try {
+          const currentBet = parseFloat(game.current_bet || 0);
+          const playerBet = parseFloat(currentPlayer.current_bet || 0);
+          const canCheck = currentBet === playerBet;
+          const minBet = parseFloat(game.table?.big_blind || 0);
+          const minRaise = Math.max(currentBet * 2, currentBet + minBet);
+          
+          // Validate pre-action is still valid
+          if (preAction === 'CHECK_FOLD') {
+            if (canCheck) {
+              await handleAction('CHECK');
+            } else {
+              await handleAction('FOLD');
+            }
+          } else if (preAction === 'CALL' && !canCheck) {
+            await handleAction('CALL');
+          } else if (preAction === 'CHECK' && canCheck) {
+            await handleAction('CHECK');
+          } else if (preAction === 'FOLD') {
+            await handleAction('FOLD');
+          } else if (preAction === 'BET' && currentBet === 0 && preActionAmount >= minBet) {
+            await handleAction('BET', preActionAmount);
+          } else if (preAction === 'RAISE' && currentBet > 0 && preActionAmount >= minRaise) {
+            await handleAction('RAISE', preActionAmount);
+          }
+          // Clear pre-action after execution
+          setPreAction(null);
+          setPreActionAmount(0);
+        } catch (error) {
+          console.error('Failed to execute pre-action:', error);
+        }
+      };
+
+      // Small delay to ensure UI updates
+      setTimeout(executePreAction, 100);
+    }
+  }, [game?.current_player, preAction, preActionAmount, game?.current_bet, game?.table?.big_blind, game?.players]);
 
   // Poll for game updates every 3 seconds as backup to WebSocket
   useEffect(() => {
@@ -299,8 +406,12 @@ const PokerTable = () => {
             };
             
             // Only show popup if we don't already have one showing for this hand AND current player is not ready AND not cashed out
-            if ((!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) && !currentPlayerIsReady && !currentPlayerIsCashedOut) {
-              console.log('✅ Showing hand results popup for hand #', newHistoryEntry.handNumber);
+            // Special handling for split pots - always show if multiple winners
+            const isSplitPot = newHistoryEntry.winners && newHistoryEntry.winners.length > 1;
+            const shouldShowPopup = (!showHandResults || (currentHandResult && currentHandResult.handNumber !== newHistoryEntry.handNumber)) && !currentPlayerIsReady && !currentPlayerIsCashedOut;
+            
+            if (shouldShowPopup || (isSplitPot && !showHandResults)) {
+              console.log('✅ Showing hand results popup for hand #', newHistoryEntry.handNumber, isSplitPot ? '(Split Pot)' : '');
               setCurrentHandResult(newHistoryEntry);
               setShowHandResults(true);
               
@@ -358,31 +469,53 @@ const PokerTable = () => {
       // onError
       (errorMessage) => {
         setConnectionStatus("error");
+        
+        // Don't attempt to reconnect if game not found
+        if (errorMessage === "Game not found") {
+          showMessage("Game no longer exists. Redirecting to tables...", "info");
+          setTimeout(() => {
+            navigate("/tables");
+          }, 2000);
+          return;
+        }
+        
         showMessage(`Connection error: ${errorMessage}`, "error");
 
-        // Try to reconnect after 3 seconds
+        // Try to reconnect after 3 seconds for other errors
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current);
         }
 
         reconnectTimeoutRef.current = setTimeout(() => {
-          connectWebSocket(gameId);
+          // Only reconnect if we still have the game ID (component not unmounted)
+          if (gameId && id === gameId) {
+            connectWebSocket(gameId);
+          }
         }, 3000);
       },
       // onClose
       (event) => {
         setConnectionStatus("disconnected");
 
-        // Only try to reconnect if it wasn't a normal closure or authentication issue
-        if (event.code !== 1000 && event.code !== 4001 && event.code !== 4003) {
+        // Don't reconnect for: normal closure, auth failure, permission denied, or game not found
+        if (event.code !== 1000 && event.code !== 4001 && event.code !== 4003 && event.code !== 4004) {
 
           if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
           }
 
           reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket(gameId);
+            // Only reconnect if we still have the game ID (component not unmounted)
+            if (gameId && id === gameId) {
+              connectWebSocket(gameId);
+            }
           }, 3000);
+        } else if (event.code === 4004) {
+          // Game not found - redirect to tables
+          showMessage("Game no longer exists. Redirecting to tables...", "info");
+          setTimeout(() => {
+            navigate("/tables");
+          }, 2000);
         }
       }
     );
@@ -456,12 +589,22 @@ const PokerTable = () => {
   };
 
   // Handle player poker actions (fold, call, bet, raise, check)
-  const handleAction = async (actionTypeParam = null, amountParam = null) => {
+  const handleAction = async (actionTypeParam, amountParam = null) => {
     try {
-      const actionToUse = actionTypeParam || actionType;
       const amountToUse = amountParam !== null ? amountParam : betAmount;
       
-      await gameService.takeAction(id, actionToUse, amountToUse);
+      // Store bet amount for "Previous Bet" feature
+      if ((actionTypeParam === 'BET' || actionTypeParam === 'RAISE') && amountToUse > 0) {
+        setLastBetAmount(amountToUse);
+      }
+      
+      await gameService.takeAction(id, actionTypeParam, amountToUse);
+      
+      // Clear any pre-actions and close betting interface
+      setPreAction(null);
+      setPreActionAmount(0);
+      setShowBettingInterface(false);
+      
       // Game state will be updated via WebSocket
       setError(null); // Clear any previous errors
       setMessage(null); // Clear any popup messages
@@ -636,101 +779,285 @@ const PokerTable = () => {
     );
   };
 
-  // Render game action buttons (fold, call, bet, raise, check)
+  // Enhanced action system with pre-actions and smart betting
   const renderActionButtons = () => {
-    if (game.status !== "PLAYING" || !isPlayerTurn()) {
+    if (game.status !== "PLAYING") {
       return null;
     }
 
     const currentPlayer = findCurrentPlayer();
-    if (!currentPlayer) return null;
+    if (!currentPlayer || currentPlayer.cashed_out) return null;
 
+    const isMyTurn = isPlayerTurn();
     const currentBet = parseFloat(game.current_bet || 0);
     const playerBet = parseFloat(currentPlayer.current_bet || 0);
     const playerStack = parseFloat(currentPlayer.stack || 0);
-
+    const callAmount = currentBet - playerBet;
     const canCheck = currentBet === playerBet;
     const minBet = parseFloat(game.table?.big_blind || 0);
-    const minRaise = currentBet * 2;
+    const minRaise = Math.max(currentBet * 2, currentBet + minBet);
+    const pot = parseFloat(game.pot || 0);
+
+    // Auto-submit pre-action logic moved to component level useEffect
+
+    const getActionButtonClass = (action) => {
+      let baseClass = 'action-btn';
+      if (preAction === action) baseClass += ' pre-selected';
+      if (!isMyTurn) baseClass += ' pre-action-mode';
+      return baseClass;
+    };
+
+    const handlePreAction = (action, amount = 0) => {
+      if (isMyTurn) {
+        // Execute immediately if it's player's turn
+        handleAction(action, amount);
+      } else {
+        // Set as pre-action
+        setPreAction(action);
+        setPreActionAmount(amount);
+      }
+    };
 
     return (
-      <div className="action-controls">
-        <button
-          onClick={() => {
-            handleAction("FOLD");
-          }}
-        >
-          Fold
-        </button>
+      <div className="enhanced-action-controls">
+        {/* Turn indicator */}
+        <div className="turn-indicator">
+          {isMyTurn ? (
+            <span className="my-turn">🎯 Your Turn</span>
+          ) : (
+            <span className="waiting-turn">
+              {preAction ? `⏳ Queued: ${preAction}${preActionAmount > 0 ? ` $${preActionAmount}` : ''}` : '⏳ Waiting for your turn'}
+            </span>
+          )}
+        </div>
 
-        {canCheck && (
+        {/* Always visible action buttons */}
+        <div className="action-buttons-row">
+          {/* Fold Button */}
           <button
-            onClick={() => {
-              handleAction("CHECK");
-            }}
+            className={getActionButtonClass('FOLD')}
+            onClick={() => handlePreAction('FOLD')}
+            disabled={false}
           >
-            Check
+            {preAction === 'FOLD' ? '✅ ' : ''}Fold
           </button>
-        )}
 
-        {!canCheck && (
+          {/* Check/Call Button */}
+          {canCheck ? (
+            <button
+              className={getActionButtonClass('CHECK')}
+              onClick={() => handlePreAction('CHECK')}
+            >
+              {preAction === 'CHECK' ? '✅ ' : ''}Check
+            </button>
+          ) : (
+            <button
+              className={getActionButtonClass('CALL')}
+              onClick={() => handlePreAction('CALL')}
+              disabled={callAmount > playerStack}
+            >
+              {preAction === 'CALL' ? '✅ ' : ''}Call ${callAmount.toFixed(2)}
+            </button>
+          )}
+
+          {/* Smart Check/Fold Button */}
+          {!isMyTurn && currentBet === 0 && (
+            <button
+              className={getActionButtonClass('CHECK_FOLD')}
+              onClick={() => handlePreAction('CHECK_FOLD')}
+              title="Will check if no bet is made, or fold if someone bets"
+            >
+              {preAction === 'CHECK_FOLD' ? '✅ ' : ''}Check/Fold
+            </button>
+          )}
+
+          {/* Bet/Raise Toggle */}
           <button
-            onClick={() => {
-              handleAction("CALL");
-            }}
+            className="betting-toggle-btn"
+            onClick={() => setShowBettingInterface(!showBettingInterface)}
           >
-            Call ${(currentBet - playerBet).toFixed(2)}
+            {currentBet === 0 ? '💰 Bet' : '⬆️ Raise'}
           </button>
-        )}
+        </div>
 
-        {currentBet === 0 && (
-          <>
-            <div className="bet-controls">
-              <input
-                type="number"
-                min={minBet}
-                max={playerStack}
-                step="0.01"
-                value={betAmount}
-                onChange={(e) => setBetAmount(parseFloat(e.target.value) || 0)}
-                placeholder={`Min: $${minBet}`}
-              />
-              <button
-                disabled={betAmount < minBet || betAmount > playerStack}
-                onClick={() => {
-                  handleAction("BET", betAmount);
-                }}
-              >
-                Bet ${betAmount || 0}
-              </button>
-            </div>
-          </>
-        )}
+        {/* Enhanced Betting Interface */}
+        {showBettingInterface && (
+          <div className="betting-interface">
+            {/* Quick Bet Options */}
+            <div className="quick-bet-section">
+              <h4>Quick Bets</h4>
+              <div className="quick-bet-buttons">
+                {/* Minimum Bet/Raise */}
+                {currentBet === 0 ? (
+                  <button
+                    className="quick-bet-btn"
+                    onClick={() => {
+                      setBetAmount(minBet);
+                      setBetSliderValue(minBet);
+                      handlePreAction('BET', minBet);
+                    }}
+                    disabled={minBet > playerStack}
+                  >
+                    Min Bet ${minBet}
+                  </button>
+                ) : (
+                  <button
+                    className="quick-bet-btn"
+                    onClick={() => {
+                      setBetAmount(minRaise);
+                      setBetSliderValue(minRaise);
+                      handlePreAction('RAISE', minRaise);
+                    }}
+                    disabled={minRaise > playerStack + playerBet}
+                  >
+                    Min Raise ${minRaise}
+                  </button>
+                )}
 
-        {currentBet > 0 && (
-          <>
-            <div className="bet-controls">
-              <input
-                type="number"
-                min={minRaise}
-                max={playerStack + playerBet}
-                step="0.01"
-                value={betAmount}
-                onChange={(e) => setBetAmount(parseFloat(e.target.value) || 0)}
-                placeholder={`Min: $${minRaise}`}
-              />
-              <button
-                disabled={
-                  betAmount < minRaise || betAmount > playerStack + playerBet
-                }
-                onClick={() => {
-                  handleAction("RAISE", betAmount);
-                }}
-              >
-                Raise to ${betAmount || 0}
-              </button>
+                {/* Pot Fraction Bets */}
+                {[0.25, 0.5, 0.75, 1].map(fraction => {
+                  const potBet = currentBet === 0 
+                    ? Math.max(pot * fraction, minBet)
+                    : Math.max(currentBet + pot * fraction, minRaise);
+                  const isValidBet = potBet <= (currentBet === 0 ? playerStack : playerStack + playerBet);
+                  
+                  return (
+                    <button
+                      key={fraction}
+                      className="quick-bet-btn"
+                      onClick={() => {
+                        setBetAmount(potBet);
+                        setBetSliderValue(potBet);
+                        handlePreAction(currentBet === 0 ? 'BET' : 'RAISE', potBet);
+                      }}
+                      disabled={!isValidBet}
+                      title={`${fraction * 100}% of pot ($${(pot * fraction).toFixed(2)})`}
+                    >
+                      {fraction === 1 ? 'Pot' : `${fraction * 100}%`} ${potBet.toFixed(0)}
+                    </button>
+                  );
+                })}
+
+                {/* All-in */}
+                <button
+                  className="quick-bet-btn all-in-btn"
+                  onClick={() => {
+                    const allInAmount = currentBet === 0 ? playerStack : playerStack + playerBet;
+                    setBetAmount(allInAmount);
+                    setBetSliderValue(allInAmount);
+                    handlePreAction(currentBet === 0 ? 'BET' : 'RAISE', allInAmount);
+                  }}
+                >
+                  All-In ${(currentBet === 0 ? playerStack : playerStack + playerBet).toFixed(0)}
+                </button>
+
+                {/* Previous Bet */}
+                {lastBetAmount > 0 && (
+                  <button
+                    className="quick-bet-btn"
+                    onClick={() => {
+                      setBetAmount(lastBetAmount);
+                      setBetSliderValue(lastBetAmount);
+                      handlePreAction(currentBet === 0 ? 'BET' : 'RAISE', lastBetAmount);
+                    }}
+                    disabled={lastBetAmount > (currentBet === 0 ? playerStack : playerStack + playerBet)}
+                  >
+                    Previous ${lastBetAmount}
+                  </button>
+                )}
+              </div>
             </div>
-          </>
+
+            {/* Custom Bet Slider */}
+            <div className="custom-bet-section">
+              <h4>Custom Amount</h4>
+              <div className="bet-slider-container">
+                <div className="slider-info">
+                  <span>Min: ${currentBet === 0 ? minBet : minRaise}</span>
+                  <span className="current-bet-display">
+                    ${betSliderValue.toFixed(2)} 
+                    {pot > 0 && (
+                      <small>({((betSliderValue / pot) * 100).toFixed(0)}% of pot)</small>
+                    )}
+                  </span>
+                  <span>Max: ${(currentBet === 0 ? playerStack : playerStack + playerBet).toFixed(0)}</span>
+                </div>
+                
+                <input
+                  type="range"
+                  className="bet-slider"
+                  min={currentBet === 0 ? minBet : minRaise}
+                  max={currentBet === 0 ? playerStack : playerStack + playerBet}
+                  step={Math.max(minBet / 4, 0.25)}
+                  value={betSliderValue}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    setBetSliderValue(value);
+                    setBetAmount(value);
+                  }}
+                />
+                
+                <div className="slider-controls">
+                  <button
+                    className="slider-adjust-btn"
+                    onClick={() => {
+                      const newValue = Math.max(
+                        betSliderValue - minBet,
+                        currentBet === 0 ? minBet : minRaise
+                      );
+                      setBetSliderValue(newValue);
+                      setBetAmount(newValue);
+                    }}
+                  >
+                    -${minBet}
+                  </button>
+                  
+                  <input
+                    type="number"
+                    className="bet-input"
+                    min={currentBet === 0 ? minBet : minRaise}
+                    max={currentBet === 0 ? playerStack : playerStack + playerBet}
+                    step="0.25"
+                    value={betSliderValue}
+                    onChange={(e) => {
+                      const value = parseFloat(e.target.value) || 0;
+                      setBetSliderValue(value);
+                      setBetAmount(value);
+                    }}
+                  />
+                  
+                  <button
+                    className="slider-adjust-btn"
+                    onClick={() => {
+                      const newValue = Math.min(
+                        betSliderValue + minBet,
+                        currentBet === 0 ? playerStack : playerStack + playerBet
+                      );
+                      setBetSliderValue(newValue);
+                      setBetAmount(newValue);
+                    }}
+                  >
+                    +${minBet}
+                  </button>
+                </div>
+                
+                <button
+                  className="execute-bet-btn"
+                  onClick={() => {
+                    if (betSliderValue >= (currentBet === 0 ? minBet : minRaise)) {
+                      handlePreAction(currentBet === 0 ? 'BET' : 'RAISE', betSliderValue);
+                      setLastBetAmount(betSliderValue);
+                    }
+                  }}
+                  disabled={betSliderValue < (currentBet === 0 ? minBet : minRaise) || 
+                           betSliderValue > (currentBet === 0 ? playerStack : playerStack + playerBet)}
+                >
+                  {currentBet === 0 ? 'Bet' : 'Raise to'} ${betSliderValue.toFixed(2)}
+                  {preAction === (currentBet === 0 ? 'BET' : 'RAISE') && preActionAmount === betSliderValue ? ' ✅' : ''}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );
@@ -783,7 +1110,7 @@ const PokerTable = () => {
         style = {
           position: "absolute",
           left: "50%",
-          bottom: "-140px",
+          bottom: "-180px",
           transform: "translateX(-50%)",
         };
       } else {
@@ -804,18 +1131,77 @@ const PokerTable = () => {
           style = {
             position: "absolute",
             left: "50%",
-            top: "-120px",
+            top: "-160px",
             transform: "translateX(-50%)",
           };
-        } else {
-          // Multiple opponents distributed around the top arc
-          const angle = (otherPlayerIndex / (totalOtherPlayers - 1)) * Math.PI - Math.PI/2;
-          const radius = 350;
+        } else if (totalOtherPlayers === 2) {
+          // Two opponents: one top-left, one top-right
+          const positions = [
+            { left: "25%", top: "-160px" },
+            { left: "75%", top: "-160px" }
+          ];
+          style = {
+            position: "absolute",
+            left: positions[otherPlayerIndex].left,
+            top: positions[otherPlayerIndex].top,
+            transform: "translateX(-50%)",
+          };
+        } else if (totalOtherPlayers === 3) {
+          // Three opponents: top-left, top-center, top-right
+          const positions = [
+            { left: "20%", top: "-160px" },
+            { left: "50%", top: "-160px" },
+            { left: "80%", top: "-160px" }
+          ];
+          style = {
+            position: "absolute",
+            left: positions[otherPlayerIndex].left,
+            top: positions[otherPlayerIndex].top,
+            transform: "translateX(-50%)",
+          };
+        } else if (totalOtherPlayers === 4) {
+          // Four opponents: spread around the table more
+          const positions = [
+            { left: "15%", top: "-140px" },
+            { left: "35%", top: "-160px" },
+            { left: "65%", top: "-160px" },
+            { left: "85%", top: "-140px" }
+          ];
+          style = {
+            position: "absolute",
+            left: positions[otherPlayerIndex].left,
+            top: positions[otherPlayerIndex].top,
+            transform: "translateX(-50%)",
+          };
+        } else if (totalOtherPlayers === 5) {
+          // Five opponents: include side positions
+          const positions = [
+            { left: "10%", top: "-120px" },
+            { left: "30%", top: "-160px" },
+            { left: "50%", top: "-160px" },
+            { left: "70%", top: "-160px" },
+            { left: "90%", top: "-120px" }
+          ];
+          style = {
+            position: "absolute",
+            left: positions[otherPlayerIndex].left,
+            top: positions[otherPlayerIndex].top,
+            transform: "translateX(-50%)",
+          };
+        } else if (totalOtherPlayers >= 6) {
+          // Six or more opponents: full elliptical distribution
+          const totalPositions = totalOtherPlayers;
+          const angle = (otherPlayerIndex / totalPositions) * 2 * Math.PI - Math.PI/2;
+          const radiusX = 400; // Horizontal radius
+          const radiusY = 200; // Vertical radius
+          
+          const x = radiusX * Math.cos(angle);
+          const y = radiusY * Math.sin(angle) - 50; // Offset upward
           
           style = {
             position: "absolute",
-            left: `calc(50% + ${radius * Math.cos(angle)}px)`,
-            top: `calc(50% + ${radius * Math.sin(angle) - 100}px)`,
+            left: `calc(50% + ${x}px)`,
+            top: `calc(50% + ${y}px)`,
             transform: "translate(-50%, -50%)",
           };
         }
@@ -1143,7 +1529,7 @@ const PokerTable = () => {
             </div>
 
             <div className="winners-section">
-              <h3>🏆 Winner{currentHandResult.winners.length > 1 ? 's' : ''}</h3>
+              <h3>🏆 {currentHandResult.winners.length > 1 ? `Split Pot - ${currentHandResult.winners.length} Winners` : 'Winner'}</h3>
               {currentHandResult.winners.map((winner, index) => (
                 <div key={index} className="winner-card">
                   <div className="winner-name">{winner.player_name}</div>

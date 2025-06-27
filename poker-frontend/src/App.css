@@ -156,6 +156,18 @@ button:disabled {
   text-align: center;
 }
 
+.refresh-indicator {
+  font-size: 0.8em;
+  margin-left: 10px;
+  color: #3498db;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .table-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

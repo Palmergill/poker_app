@@ -1,5 +1,5 @@
 // src/components/TableList.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { tableService, gameService, authService } from "../services/apiService";
 
@@ -13,31 +13,68 @@ const TableList = () => {
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
   const [joinTableId, setJoinTableId] = useState(null);
   const [buyInAmount, setBuyInAmount] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshIntervalRef = useRef(null);
   const isAdmin = authService.isAdmin();
 
   useEffect(() => {
-    const fetchTables = async () => {
+    const fetchTables = async (isRefresh = false) => {
       try {
+        if (isRefresh) {
+          setIsRefreshing(true);
+        }
         const response = await tableService.getTables();
         setTables(response.data);
-        setLoading(false);
+        if (!isRefresh) {
+          setLoading(false);
+        }
       } catch (err) {
-        setError("Failed to load tables");
-        setLoading(false);
+        if (!isRefresh) {
+          setError("Failed to load tables");
+          setLoading(false);
+        } else {
+          console.warn("Failed to refresh tables:", err);
+        }
+      } finally {
+        if (isRefresh) {
+          setIsRefreshing(false);
+        }
       }
     };
 
-    const fetchActiveGames = async () => {
+    const fetchActiveGames = async (isRefresh = false) => {
       try {
         const response = await gameService.getGames();
         setActiveGames(response.data);
       } catch (err) {
-        console.error("Failed to load active games");
+        if (!isRefresh) {
+          console.error("Failed to load active games:", err);
+        } else {
+          console.warn("Failed to refresh active games:", err);
+        }
       }
     };
 
+    const refreshData = async () => {
+      await Promise.all([
+        fetchTables(true),
+        fetchActiveGames(true)
+      ]);
+    };
+
+    // Initial load
     fetchTables();
     fetchActiveGames();
+
+    // Set up auto-refresh every 5 seconds
+    refreshIntervalRef.current = setInterval(refreshData, 5000);
+
+    // Cleanup function
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+    };
   }, []);
 
   if (loading) {
@@ -56,16 +93,29 @@ const TableList = () => {
     setDeleteConfirm({ tableId: table.id, tableName: table.name });
   };
 
+  const refreshDataAfterOperation = async () => {
+    try {
+      const [tablesResponse, gamesResponse] = await Promise.all([
+        tableService.getTables(),
+        gameService.getGames()
+      ]);
+      setTables(tablesResponse.data);
+      setActiveGames(gamesResponse.data);
+    } catch (err) {
+      console.warn("Failed to refresh data after operation:", err);
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteConfirm) return;
 
     try {
       setError(null);
       await tableService.deleteTable(deleteConfirm.tableId);
-      
-      // Remove the table from the local state
-      setTables(tables.filter(table => table.id !== deleteConfirm.tableId));
       setDeleteConfirm(null);
+      
+      // Refresh data to get updated list
+      await refreshDataAfterOperation();
       
       // Show success message briefly
       setError("✅ Table deleted successfully");
@@ -93,10 +143,10 @@ const TableList = () => {
     try {
       setError(null);
       await gameService.deleteGame(deleteGameConfirm.gameId);
-      
-      // Remove the game from activeGames state
-      setActiveGames(activeGames.filter(game => game.id !== deleteGameConfirm.gameId));
       setDeleteGameConfirm(null);
+      
+      // Refresh data to get updated list
+      await refreshDataAfterOperation();
       
       // Show success message briefly
       setError("✅ Game deleted successfully");
@@ -122,11 +172,10 @@ const TableList = () => {
     try {
       setError(null);
       const response = await tableService.deleteAllTables();
-      
-      // Clear all tables and games from state
-      setTables([]);
-      setActiveGames([]);
       setDeleteAllConfirm(false);
+      
+      // Refresh data to get updated list
+      await refreshDataAfterOperation();
       
       // Show success message
       setError(`✅ ${response.data.message}`);
@@ -175,7 +224,10 @@ const TableList = () => {
   return (
     <div className="table-list">
       <div className="table-list-header">
-        <h2>Available Poker Tables</h2>
+        <h2>
+          Available Poker Tables
+          {isRefreshing && <span className="refresh-indicator">🔄</span>}
+        </h2>
         <div className="header-buttons">
           <Link to="/tables/create" className="btn btn-success btn-sm create-table-btn">
             Create New Table
@@ -247,13 +299,15 @@ const TableList = () => {
                       >
                         Join Table
                       </button>
-                      <button
-                        onClick={() => handleDeleteClick(table)}
-                        className="btn btn-danger btn-sm delete-table-btn"
-                      >
-                        Delete Table
-                      </button>
-                      {activeGame.status === "PLAYING" && (
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleDeleteClick(table)}
+                          className="btn btn-danger btn-sm delete-table-btn"
+                        >
+                          Delete Table
+                        </button>
+                      )}
+                      {activeGame.status === "PLAYING" && isAdmin && (
                         <button
                           onClick={() => handleDeleteGameClick(activeGame, table)}
                           className="btn btn-danger btn-sm delete-game-btn"
@@ -264,24 +318,20 @@ const TableList = () => {
                     </>
                   ) : (
                     <>
-                      <Link
-                        to={`/tables/${table.id}`}
-                        className="btn btn-primary btn-sm"
-                      >
-                        View Table
-                      </Link>
                       <button
                         onClick={() => handleJoinTableClick(table)}
                         className="btn btn-success btn-sm join-table-btn"
                       >
                         Join Table
                       </button>
-                      <button
-                        onClick={() => handleDeleteClick(table)}
-                        className="btn btn-danger btn-sm delete-table-btn"
-                      >
-                        Delete Table
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleDeleteClick(table)}
+                          className="btn btn-danger btn-sm delete-table-btn"
+                        >
+                          Delete Table
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
